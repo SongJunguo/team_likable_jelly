@@ -1,6 +1,6 @@
+FOLDER_DATA = /workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset
 
-FOLDER_DATA = /disk3/testprc
+SUBMISSIONS_FOLDER = /workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_submissions
+EXISTING_DATA = /workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset
 
-SUBMISSIONS_FOLDER = /disk3/testprc/submissions
-
-JSON = /home/alligier/response_1724410156793.json
+JSON = $(EXISTING_DATA)/response_1729148962229.json

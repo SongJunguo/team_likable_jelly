@@ -1,0 +1,9 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Your rule content
+- 使用conda虚拟环境opensky
+- 系统为ubuntu18.04
+- 目前在容器内运行

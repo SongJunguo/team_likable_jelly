@@ -1,3 +1,7 @@
+#dataset
+opensky_2024_PRC_dataset/
+opensky_2024_PRC_submissions/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

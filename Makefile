@@ -1,4 +1,3 @@
-
 .PHONY: download cleantrajectories features submission
 .SECONDARY:
 
@@ -67,7 +66,7 @@ WEATHERS = $(foreach flight,$(FLIGHT_FILES), $(FOLDER_WEATHER)/$(flight).parquet
 THUNDERS = $(foreach flight,$(FLIGHT_FILES), $(FOLDER_THUNDER)/$(flight).parquet)
 
 
-download: $(FLIGHTS) $(foreach f,$(shell mc ls dc24/competition-data  | rev | cut -d' ' -f1 | rev | grep "parquet"),$(FOLDER_RAW)/$(f)) $(METARS)
+download: $(FLIGHTS) $(foreach f,$(shell ls $(EXISTING_DATA)/rawtrajectories/*.parquet 2>/dev/null | xargs -n 1 basename),$(FOLDER_RAW)/$(f)) $(METARS)
 
 cleantrajectories: $(TRAJS)
 
@@ -123,12 +122,25 @@ $(FOLDER_THUNDER)/%.parquet: $(FOLDER_FLGT)/%.parquet $(AIRPORTS) $(METARS)
 
 $(FOLDER_FLGT)/%.parquet:
 	mkdir -p $(@D)
-	mc cp  dc24/competition-data/$(basename $(@F)).csv $(FOLDER_FLGT)/$(basename $(@F)).csv
+	if [ -f "$(EXISTING_DATA)/flights/$(basename $(@F)).csv" ]; then \
+		cp "$(EXISTING_DATA)/flights/$(basename $(@F)).csv" "$(FOLDER_FLGT)/$(basename $(@F)).csv"; \
+	fi
+	if [ ! -f "$(FOLDER_FLGT)/$(basename $(@F)).csv" ] && [ -f "$(EXISTING_DATA)/flights/$(basename $(@F)).parquet" ]; then \
+		cp "$(EXISTING_DATA)/flights/$(basename $(@F)).parquet" "$@"; \
+		exit 0; \
+	fi
 	python3 flights_to_parquet.py -f_in $(@:.parquet=.csv) -f_out $@
 
 $(FOLDER_RAW)/%.parquet:
 	mkdir -p $(@D)
-	mc cp  dc24/competition-data/$(@F) $@
+	if [ -f "$(EXISTING_DATA)/rawtrajectories/$(@F)" ]; then \
+		cp "$(EXISTING_DATA)/rawtrajectories/$(@F)" "$@"; \
+	elif [ -f "$(EXISTING_DATA)/$(@F)" ]; then \
+		cp "$(EXISTING_DATA)/$(@F)" "$@"; \
+	else \
+		echo "Cannot find $(@F) in $(EXISTING_DATA)/rawtrajectories or $(EXISTING_DATA)"; \
+		exit 1; \
+	fi
 
 $(FOLDER_FILT)/%.parquet: $(FOLDER_RAW)/%.parquet
 	@mkdir -p $(@D)
