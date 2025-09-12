@@ -1,0 +1,26 @@
+{
+  "total_flights": 979680,
+  "by_flight": {
+    "EU": 929387,
+    "US": 28440,
+    "OTHER": 21853
+  },
+  "by_flight_pct": {
+    "EU": 94.87,
+    "US": 2.9,
+    "OTHER": 2.23
+  },
+  "by_points": {
+    "points_us": 421675530,
+    "points_eu": 5566186164,
+    "points_other": 402336358,
+    "points_total": 6390198052
+  },
+  "by_points_pct": {
+    "US": 6.6,
+    "EU": 87.11,
+    "OTHER": 6.3
+  },
+  "main_region_by_flights": "EU",
+  "main_region_by_points": "EU"
+}
