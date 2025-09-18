@@ -10,7 +10,9 @@ def add_localtime(airports,flights,tadep,tades):
         flights = flights.join(airports[["icao_code","time_zone"]].set_index("icao_code"),on=a)
         flights = flights.rename(columns={"time_zone":"time_zone_"+a})
         flights[f"local_{t}"]=(pd.to_datetime(flights.groupby(f'time_zone_{a}')[f'{t}']
-                                         .transform(lambda x: x.dt.tz_convert(x.name).dt.tz_localize(tz=None))
+                                         .transform(lambda x: x.dt.tz_convert(x.name).dt.tz_localize(tz=
+                                                                                                     
+                                                                                                     ))
         )
         )
     return flights
