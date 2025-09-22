@@ -1,0 +1,102 @@
+# 跨日期轨迹拼接配置文件
+# Cross-date trajectory stitching configuration
+
+# 数据路径配置
+data_paths:
+  raw_trajectories: "/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/classic_filtered_trajectories"
+  output_dir: "/workspace/aircraft_trajectory/team_likable_jelly/trajectory_stitching/output/stitched_trajectories"
+  reports_dir: "/workspace/aircraft_trajectory/team_likable_jelly/trajectory_stitching/output/reports"
+
+# 跨日期检测参数
+cross_date_detection:
+  # 检测模式选择
+  detection_mode: "icao24_only"  # "flight_id_only", "icao24_only", "both"
+  
+  # 边界时间窗口（小时）
+  boundary_hours_before_midnight: 2  # 22:00-24:00
+  boundary_hours_after_midnight: 2   # 00:00-02:00
+  
+  # 匹配标识符优先级（当detection_mode为"both"时使用）
+  matching_identifiers:
+    - "flight_id"    # 优先使用flight_id
+    - "icao24"       # 备选使用icao24
+  
+  # 基于位置和时间的匹配参数
+  max_distance_km: 100             # 增加距离阈值
+  max_time_gap_minutes: 60         # 增加时间容忍度到1小时
+
+# 连续性验证参数
+continuity_validation:
+  # 时间连续性阈值（分钟）
+  max_time_gap_minutes: 30
+  
+  # 地理位置连续性阈值（公里）
+  max_distance_km: 100
+  
+  # 飞行参数变化阈值
+  max_altitude_change_ft: 5000      # 高度变化
+  max_speed_change_kts: 100         # 速度变化
+  max_heading_change_deg: 90        # 航向变化
+
+# 拼接处理参数
+stitching_processing:
+  # 处理模式
+  mode: "create_new"  # "create_new" 或 "modify_existing"
+  
+  # 输出文件命名
+  output_filename_pattern: "{date}_stitched.parquet"
+  
+  # 是否保留原始flight_id
+  preserve_original_flight_id: true
+  
+  # 新flight_id生成策略
+  new_flight_id_strategy: "max_plus_increment"
+
+# 质量控制参数
+quality_control:
+  # 最小轨迹点数
+  min_trajectory_points: 10
+  
+  # 最小飞行时间（分钟）
+  min_flight_duration_minutes: 5
+  
+  # 异常值检测
+  outlier_detection:
+    altitude_range: [-2000, 50000]    # 英尺
+    speed_range: [0, 1000]            # 节
+    latitude_range: [-90, 90]         # 度
+    longitude_range: [-180, 180]      # 度
+
+# 性能优化参数
+performance:
+  # 并行处理
+  use_multiprocessing: true
+  max_workers: 4
+  
+  # 内存管理
+  chunk_size: 10000
+  
+  # 缓存设置
+  enable_caching: true
+  cache_dir: "trajectory_stitching/.cache"
+
+# 日志配置
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_file: "trajectory_stitching/output/reports/stitching.log"
+  console_output: true
+
+# 验证配置
+validation:
+  # 是否进行详细验证
+  detailed_validation: true
+  
+  # 生成验证报告
+  generate_reports: true
+  
+  # 统计信息
+  statistics:
+    - "flight_count_before_after"
+    - "trajectory_points_count"
+    - "time_coverage"
+    - "stitching_success_rate"

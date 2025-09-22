@@ -1,0 +1,20 @@
+details:
+- date1_file: /workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories/2022-01-01.parquet
+  date2_file: /workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories/2022-01-02.parquet
+  date_pair: 2022-01-01 -> 2022-01-02
+  likely_cross_date_flights: 0
+  matches: []
+  success: true
+  total_candidates: 0
+- date1_file: /workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories/2022-01-02.parquet
+  date2_file: /workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories/2022-01-03.parquet
+  date_pair: 2022-01-02 -> 2022-01-03
+  likely_cross_date_flights: 0
+  matches: []
+  success: true
+  total_candidates: 0
+failed_stitches: 0
+processing_time: '2025-09-22T14:18:04.099104'
+successful_stitches: 2
+total_date_pairs_processed: 2
+total_flights_stitched: 0

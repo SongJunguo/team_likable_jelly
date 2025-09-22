@@ -1,0 +1,16 @@
+details:
+- date_pair: 2022-01-01 -> 2022-01-02
+  flights_stitched: 0
+  message: No flights to stitch
+  success: true
+  total_trajectory_points: 0
+- date_pair: 2022-01-02 -> 2022-01-03
+  flights_stitched: 0
+  message: No flights to stitch
+  success: true
+  total_trajectory_points: 0
+failed_stitches: 0
+processing_time: '2025-09-22T14:18:04.107537'
+successful_stitches: 2
+total_date_pairs_processed: 2
+total_flights_stitched: 0
