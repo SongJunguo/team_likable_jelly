@@ -1,0 +1,2 @@
+- 数据处理请使用conda虚拟环境 conda activate opensky
+- 命令行在ubuntu18.04的一个容器内运行

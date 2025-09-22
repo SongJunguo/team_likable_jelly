@@ -48,32 +48,36 @@ def read_trajectories(f, strategy):
     )  # .head(10_000)
 
     if strategy == "classic":
-        # 经典策略的滤波器链条，顺序与“数据清理流程”文档保持一致
+        # 构建经典过滤器链：按数据清理流程文档的顺序组合多个过滤器
+        # 使用管道操作符 | 实现链式过滤，每个过滤器依次处理数据
         filter_chain = (
-            FilterCstLatLon()
-            | FilterCstPosition()
-            | FilterCstSpeed()
-            | MyFilterDerivative()
-            | FilterIsolated()
+            FilterCstLatLon()      # 1. 经纬度常数检查
+            | FilterCstPosition()  # 2. 位置常数检查  
+            | FilterCstSpeed()     # 3. 速度常数检查
+            | MyFilterDerivative() # 4. 导数异常检查
+            | FilterIsolated()     # 5. 孤立点检查
         )
     else:
         raise Exception(f"strategy '{strategy}' not implemented")
 
+    # 执行过滤器链：应用所有过滤器并禁用内置插值
     dftrafficin = (
         Traffic(df)
-        .filter(filter=filter_chain, strategy=nointerpolate)
-        .eval(max_workers=1)
-        .data
+        .filter(filter=filter_chain, strategy=nointerpolate)  # 应用过滤器链
+        .eval(max_workers=1)  # 单线程执行（便于调试和稳定性）
+        .data                 # 提取处理后的DataFrame
     )
 
-    # 变量屏蔽联动：若位置或高度被置 NaN，同步屏蔽相关天气变量
+    # 数据质量联动屏蔽：当关键位置变量异常时，同步屏蔽依赖的天气变量
+    # 逻辑：如果不知道飞机位置，对应位置的天气数据就无意义
     dico_tomask = {
-        # "track": ["track_unwrapped"],  # 如需同步屏蔽航迹角，可按需启用
-        "latitude": ["u_component_of_wind", "v_component_of_wind", "temperature"],
-        "altitude": ["u_component_of_wind", "v_component_of_wind", "temperature"],
+        # "track": ["track_unwrapped"],  # 航迹角屏蔽（可选）
+        "latitude": ["u_component_of_wind", "v_component_of_wind", "temperature"],   # 纬度异常→屏蔽天气
+        "altitude": ["u_component_of_wind", "v_component_of_wind", "temperature"],   # 高度异常→屏蔽天气
     }
-    for k, lvar in dico_tomask.items():
-        for v in lvar:
+    for k, lvar in dico_tomask.items():           # k: 主变量, lvar: 依赖变量列表
+        for v in lvar:                            # v: 当前要屏蔽的依赖变量
+            # 若主变量k为NaN，则将依赖变量v的对应行也置为NaN
             dftrafficin[v] = dftrafficin[[v]].mask(dftrafficin[k].isna())
 
     return dftrafficin
