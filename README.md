@@ -54,6 +54,34 @@ results when re-running but only on the same "system", see
 |                    20 | 1,561.48                                     |     0 to 19    |         28            |
 
 
+# Data Directory Structure
+The project generates various intermediate data files during processing. Below is a description of the main data directories in `opensky_2024_PRC_dataset/`:
+
+## Core Data Directories
+- **`rawtrajectories/`**: Original ADS-B trajectory data files (daily parquet files, e.g., 2022-01-01.parquet)
+- **`flights/`**: Flight metadata including departure/arrival airports, aircraft types, and target TOW values
+- **`classic_filtered_trajectories/`**: Trajectories after filtering (removing duplicates, outliers, isolated points) but before interpolation
+- **`classic__1e-2_interpolated_trajectories/`**: Smoothed trajectories using cubic splines with 20-second gap limit
+
+## Feature Data Directories
+- **`classic__1e-2__5_500_40_daltitude_1_-0.5_1_masses/`**: Climbing phase features including estimated masses, energy rates, and climb performance metrics computed from altitude slices
+  - **`challenge_set/`**: Features for the challenge dataset split
+- **`classic__1e-2__20_cruise/`**: Cruise phase features including Mach numbers, altitudes, and temporal profile statistics from 20 time slices
+  - **`challenge_set/`**: Features for the challenge dataset split  
+- **`classic__1e-2_wind/`**: Wind effect features computing average wind projection along flight paths
+  - **`challenge_set/`**: Features for the challenge dataset split
+
+## Weather Data Directories
+- **`weather/`**: METAR-derived weather features at departure and arrival airports (temperature, pressure, visibility, etc.)
+- **`thunder/`**: Thunderstorm and fog indicators extracted from METAR data in spatio-temporal radius around airports
+
+## Directory Naming Convention
+The directory names encode processing parameters:
+- `classic`: Filtering strategy used
+- `1e-2`: Smoothing parameter for cubic splines
+- `5_500_40_daltitude_1_-0.5_1`: Climbing feature parameters (periods, vertical rate threshold, etc.)
+- `20`: Number of temporal slices for cruise features
+
 # To Run the Code
 First setup your environment using the `environment.yml` file and edit the variable `FOLDER_DATA` in the `CONFIG` file, then just run the command below. Please be aware that it might take some time. To reduce this time depending on your computer you might want to use the option `-j` of `make`. For instance, `make -j4 cleantrajectories`, will launch 4 processes in parallel. In this whole project, each process takes no more than approximately 20GB of RAM. The only process that takes more is the training but this training phase does not use the `-j` of the `make` to run in parallel.
 ```
