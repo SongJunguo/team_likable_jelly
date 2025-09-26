@@ -77,7 +77,14 @@ def main():
     print('=' * 60)
     
     # 检查目录 - perfect_trajectories在项目根目录下
-    perfect_dir = '../../perfect_trajectories'
+    # 使用绝对路径，确保无论在哪个目录运行都能找到正确路径
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.join(script_dir, '..', '..')
+    perfect_dir = os.path.join(project_root, 'perfect_trajectories')
+    perfect_dir = os.path.abspath(perfect_dir)
+    
+    print(f'🔍 查找目录: {perfect_dir}')
+    
     if not os.path.exists(perfect_dir):
         print(f'❌ 目录不存在: {perfect_dir}')
         print('💡 提示: 请先运行implement_final_solution.py创建perfect_trajectories目录')

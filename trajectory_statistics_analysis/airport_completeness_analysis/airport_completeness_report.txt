@@ -1,0 +1,56 @@
+Airport-based Trajectory Completeness Analysis Report
+============================================================
+
+1. OVERALL STATISTICS
+------------------------------
+Total trajectories analyzed: 238,215
+
+Completeness Distribution:
+  Unknown: 238,215 (100.0%)
+
+2. AIRPORT PROXIMITY ANALYSIS
+-----------------------------------
+Start points within 50km of airport: 0 (0.0%)
+End points within 50km of airport: 0 (0.0%)
+Both endpoints within 50km: 0 (0.0%)
+
+Average distance to nearest airport (start): 5595.8 km
+Average distance to nearest airport (end): 5664.7 km
+
+3. AIRPORT USAGE ANALYSIS
+----------------------------
+Top 5 Start Airports:
+  URC: 237,836 flights
+  SHE: 370 flights
+  KMG: 9 flights
+
+Top 5 End Airports:
+  URC: 237,922 flights
+  SHE: 291 flights
+  KMG: 2 flights
+
+4. DETAILED COMPLETENESS ANALYSIS
+--------------------------------------
+UNKNOWN TRAJECTORIES (238,215):
+  Average start distance to airport: 5595.8 km
+  Average end distance to airport: 5664.7 km
+  Average duration: 1.79 hours
+  Average point count: 6285
+  Average trajectory distance: 1215.5 km
+
+5. ANALYSIS CONCLUSIONS
+-------------------------
+• Complete trajectories: 0.0%
+• Likely complete trajectories: 0.0%
+• Total good quality trajectories: 0.0%
+
+Key Findings:
+• 0.0% of trajectories start within 50km of major airports
+• 0.0% of trajectories end within 50km of major airports
+• Average trajectory covers 1215 km in 1.79 hours
+
+Recommendations:
+• Focus analysis on 'Complete' and 'Likely_Complete' trajectories for best data quality
+• Consider airport proximity when filtering trajectories
+• Validate 'Partial' trajectories against specific research requirements
+• Use geographic constraints to improve trajectory selection

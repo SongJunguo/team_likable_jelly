@@ -1,0 +1,93 @@
+Trajectory-Official Flight Data Matching Report
+============================================================
+
+1. MATCHING STATISTICS
+------------------------------
+
+CHALLENGE_SET:
+  Matched flight IDs: 141,600
+  Match rate (trajectory perspective): 59.44%
+  Match rate (official data perspective): 38.37%
+  Merged records: 141,600
+
+SUBMISSION_SET:
+  Matched flight IDs: 40,757
+  Match rate (trajectory perspective): 17.11%
+  Match rate (official data perspective): 38.46%
+  Merged records: 40,757
+
+FINAL_SUBMISSION_SET:
+  Matched flight IDs: 60,652
+  Match rate (trajectory perspective): 25.46%
+  Match rate (official data perspective): 38.35%
+  Merged records: 60,652
+
+
+2. DURATION CONSISTENCY ANALYSIS
+----------------------------------------
+
+CHALLENGE_SET:
+  Total records: 141,600
+  Valid time records: 141,600
+  Consistent flights (±10%): 52,750 (37.3%)
+  Moderate difference (10-50%): 88,680 (62.6%)
+  Large difference (>50%): 170 (0.1%)
+  Mean duration difference: -13.2%
+  Median duration difference: -11.8%
+
+SUBMISSION_SET:
+  Total records: 40,757
+  Valid time records: 40,757
+  Consistent flights (±10%): 15,198 (37.3%)
+  Moderate difference (10-50%): 25,522 (62.6%)
+  Large difference (>50%): 37 (0.1%)
+  Mean duration difference: -13.2%
+  Median duration difference: -11.7%
+
+FINAL_SUBMISSION_SET:
+  Total records: 60,652
+  Valid time records: 60,652
+  Consistent flights (±10%): 22,663 (37.4%)
+  Moderate difference (10-50%): 37,928 (62.5%)
+  Large difference (>50%): 61 (0.1%)
+  Mean duration difference: -13.2%
+  Median duration difference: -11.7%
+
+
+3. INCOMPLETE TRAJECTORY ANALYSIS
+----------------------------------------
+
+CHALLENGE_SET:
+  Total matched trajectories: 141,600
+  Short trajectories (<500 points): 1 (0.0%)
+  Short duration (<0.5h): 2,407 (1.7%)
+  Significantly shorter than official: 3,914 (2.8%)
+  Total potentially incomplete: 5,428 (3.8%)
+
+SUBMISSION_SET:
+  Total matched trajectories: 40,757
+  Short trajectories (<500 points): 0 (0.0%)
+  Short duration (<0.5h): 690 (1.7%)
+  Significantly shorter than official: 1,125 (2.8%)
+  Total potentially incomplete: 1,570 (3.9%)
+
+FINAL_SUBMISSION_SET:
+  Total matched trajectories: 60,652
+  Short trajectories (<500 points): 0 (0.0%)
+  Short duration (<0.5h): 1,028 (1.7%)
+  Significantly shorter than official: 1,718 (2.8%)
+  Total potentially incomplete: 2,349 (3.9%)
+
+
+4. CONCLUSIONS AND RECOMMENDATIONS
+---------------------------------------------
+
+Key Findings:
+- Successfully matched trajectory data with official flight records
+
+Recommendations:
+1. Filter out trajectories with <500 points for analysis
+2. Cross-validate trajectory duration with official flight times
+3. Investigate trajectories with >50% duration difference
+4. Consider using only trajectories that match official records
+5. Implement quality scoring based on multiple criteria
