@@ -62,6 +62,8 @@ The project generates various intermediate data files during processing. Below i
 - **`flights/`**: Flight metadata including departure/arrival airports, aircraft types, and target TOW values
 - **`classic_filtered_trajectories/`**: Trajectories after filtering (removing duplicates, outliers, isolated points) but before interpolation
 - **`classic__1e-2_interpolated_trajectories/`**: Smoothed trajectories using cubic splines with 20-second gap limit
+- **`complete_high_quality_trajectories/`**: Rebuilt trajectories for high-quality flights (trim heads/tails by valid lat/lon; linear interpolation; track with angle-safe interpolation)
+- **`perfect_trajectories/`**: Final dataset with 0 missing values (removes any trajectory that still contains NaNs in key columns)
 
 ## Feature Data Directories
 - **`classic__1e-2__5_500_40_daltitude_1_-0.5_1_masses/`**: Climbing phase features including estimated masses, energy rates, and climb performance metrics computed from altitude slices
@@ -81,6 +83,11 @@ The directory names encode processing parameters:
 - `1e-2`: Smoothing parameter for cubic splines
 - `5_500_40_daltitude_1_-0.5_1`: Climbing feature parameters (periods, vertical rate threshold, etc.)
 - `20`: Number of temporal slices for cruise features
+
+# Documentation Quick Links
+- Filtering pipeline overview: docs/数据清理流程.md
+- Derivative spike filter quickstart: learn_python/myfilterderivative_quickstart.ipynb
+- Build complete/perfect datasets: docs/trajectory_filter_learning/05_高质量与完美数据集生成.md
 
 # To Run the Code
 First setup your environment using the `environment.yml` file and edit the variable `FOLDER_DATA` in the `CONFIG` file, then just run the command below. Please be aware that it might take some time. To reduce this time depending on your computer you might want to use the option `-j` of `make`. For instance, `make -j4 cleantrajectories`, will launch 4 processes in parallel. In this whole project, each process takes no more than approximately 20GB of RAM. The only process that takes more is the training but this training phase does not use the `-j` of the `make` to run in parallel.
@@ -214,4 +221,3 @@ general not just randomness introduced by bagging.
 
 [^bignote]: "Vanilla" here refers to tree with simple split condition where one variable is
 compared to a constant threshold: $X_i<Threshold$
-
