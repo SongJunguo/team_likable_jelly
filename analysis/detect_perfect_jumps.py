@@ -35,6 +35,8 @@ import csv
 import logging
 import os
 from dataclasses import dataclass
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import re
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
 
@@ -199,8 +201,58 @@ def detect_jumps_for_day(
 # --------------------------- 主流程 --------------------------- #
 
 
-def enumerate_parquet_files(data_dir: Path) -> List[Path]:
-    files = sorted(p for p in data_dir.glob("*.parquet") if p.name.startswith("complete_"))
+def process_one_day(
+    fp_str: str,
+    out_dir_str: str,
+    thresholds: JumpThresholds,
+    force: bool,
+) -> Tuple[str, int, Optional[str]]:
+    """子进程入口：处理单个日文件，写出日明细与日汇总。
+
+    返回 (day_file, n_events, error_msg_or_None)。
+    """
+    try:
+        fp = Path(fp_str)
+        out_dir = Path(out_dir_str)
+        day_file = fp.name
+        day_out = out_dir / f"perfect_jumps_{day_file.replace('.parquet', '.csv')}"
+        day_sum = out_dir / f"perfect_jumps_summary_{day_file.replace('.parquet', '.csv')}"
+        if (not force) and day_out.exists():
+            return day_file, -1, None  # 跳过
+
+        df = pd.read_parquet(fp, columns=["flight_id", "timestamp", "latitude", "longitude"])
+        detail_df, agg_df = detect_jumps_for_day(df, day_file, thresholds)
+        # 明细
+        write_csv(detail_df, day_out)
+        # 日汇总
+        write_csv(agg_df, day_sum)
+        return day_file, len(detail_df), None
+    except Exception as exc:  # pragma: no cover - I/O/并发错误
+        return Path(fp_str).name, 0, str(exc)
+
+
+def _extract_day(name: str) -> Optional[str]:
+    """从文件名中提取 YYYY-MM-DD（若无则返回 None）。"""
+    m = re.search(r"(\d{4}-\d{2}-\d{2})", name)
+    return m.group(1) if m else None
+
+
+def enumerate_parquet_files(
+    data_dir: Path, date_from: Optional[str] = None, date_to: Optional[str] = None
+) -> List[Path]:
+    files = sorted(p for p in data_dir.glob("*.parquet"))
+    if date_from or date_to:
+        kept: List[Path] = []
+        for p in files:
+            d = _extract_day(p.name)
+            if d is None:
+                continue
+            if date_from and d < date_from:
+                continue
+            if date_to and d > date_to:
+                continue
+            kept.append(p)
+        files = kept
     return files
 
 
@@ -223,6 +275,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-speed", type=float, default=1500.0, help="速度阈值（km/h），默认 1500")
     parser.add_argument("--log-file", default=None, help="可选：日志输出路径（默认写入 out-dir/detect_perfect_jumps.log）")
     parser.add_argument("--verbose", action="store_true", help="输出更详细的日志")
+    parser.add_argument("--procs", type=int, default=8, help="并行进程数（默认 8）")
+    parser.add_argument("--from", dest="date_from", default=None, help="起始日期 YYYY-MM-DD（可选）")
+    parser.add_argument("--to", dest="date_to", default=None, help="结束日期 YYYY-MM-DD（可选）")
+    parser.add_argument("--force", action="store_true", help="若每日输出已存在则强制重算")
     return parser.parse_args()
 
 
@@ -263,7 +319,7 @@ def main() -> None:
         min_speed_kmh=args.min_speed,
     )
 
-    files = enumerate_parquet_files(data_dir)
+    files = enumerate_parquet_files(data_dir, args.date_from, args.date_to)
     if not files:
         raise FileNotFoundError(f"未在 {data_dir} 找到 parquet 文件")
 
@@ -278,45 +334,68 @@ def main() -> None:
     logger.info("待扫描文件数: %d", len(files))
     logger.info("判定阈值: %s", thresholds.explain())
 
-    all_events: List[pd.DataFrame] = []
-    all_aggs: List[pd.DataFrame] = []
+    day_event_paths: List[Path] = []
+    day_summary_paths: List[Path] = []
 
-    for idx, fp in enumerate(files, 1):
-        day_file = fp.name
-        try:
-            df = pd.read_parquet(fp, columns=["flight_id", "timestamp", "latitude", "longitude"])
-        except Exception as exc:  # pragma: no cover - I/O 错误情况下给出提示
-            logger.warning("读取 %s 失败: %s", day_file, exc)
-            continue
+    # 并行处理单日文件
+    with ProcessPoolExecutor(max_workers=max(1, int(args.procs))) as ex:
+        futs = [
+            ex.submit(
+                process_one_day,
+                str(fp),
+                str(out_dir),
+                thresholds,
+                args.force,
+            )
+            for fp in files[: (args.limit or None)]
+        ]
+        for i, fut in enumerate(as_completed(futs), 1):
+            day_file, n, err = fut.result()
+            if err:
+                logger.warning("读取/处理 %s 失败: %s", day_file, err)
+                continue
+            if n == -1:
+                logger.info("%d/%d %s → 跳过（已存在）", i, len(futs), day_file)
+                continue
+            # 记录路径，后续统一合并
+            day_csv = out_dir / f"perfect_jumps_{day_file.replace('.parquet', '.csv')}"
+            day_sum = out_dir / f"perfect_jumps_summary_{day_file.replace('.parquet', '.csv')}"
+            if day_csv.exists():
+                day_event_paths.append(day_csv)
+            if day_sum.exists():
+                day_summary_paths.append(day_sum)
+            if n > 0:
+                logger.info("%d/%d %s → 检出 %d 条跳变事件", i, len(futs), day_file, n)
+            else:
+                logger.info("%d/%d %s → 未发现跳变", i, len(futs), day_file)
 
-        detail_df, agg_df = detect_jumps_for_day(df, day_file, thresholds)
-
-        if args.verbose:
-            logger.debug("%s: 行数 %d, 事件 %d", day_file, len(df), len(detail_df))
-
-        if not detail_df.empty:
-            day_out = out_dir / f"perfect_jumps_{day_file.replace('.parquet', '.csv')}"
-            write_csv(detail_df, day_out)
-            all_events.append(detail_df)
-            all_aggs.append(agg_df)
-            logger.info("%d/%d %s → 检出 %d 条跳变事件", idx, len(files), day_file, len(detail_df))
-        else:
-            logger.info("%d/%d %s → 未发现跳变", idx, len(files), day_file)
-
-    if not all_events:
-        logger.info("全量扫描未发现跳变事件")
+    # 若没有任何新生成的日事件或日汇总，说明全部跳过或无事件
+    if (not day_event_paths) and (not day_summary_paths):
+        logger.info("全量扫描未发现跳变事件（或每日输出已存在，使用 --force 强制重算）")
         return
 
-    events_df = pd.concat(all_events, ignore_index=True)
-    aggs_df = pd.concat(all_aggs, ignore_index=True)
+    # 汇总
+    aggs_df = (
+        pd.concat((pd.read_csv(p) for p in day_summary_paths), ignore_index=True)
+        if day_summary_paths
+        else pd.DataFrame()
+    )
 
     summary_path = out_dir / "jump_events_summary.csv"
     write_csv(aggs_df.sort_values(["event_count", "max_speed_kmh"], ascending=[False, False]), summary_path)
 
+    # 合并所有日事件明细（如需内存友好，可按需改为增量写）
     detail_path = out_dir / "jump_events_all.csv"
-    write_csv(events_df, detail_path)
-
-    logger.info("跳变事件总数: %d，涉及航班 %d 架次", len(events_df), aggs_df["flight_id"].nunique())
+    if day_event_paths:
+        events_df = pd.concat((pd.read_csv(p) for p in day_event_paths), ignore_index=True)
+        write_csv(events_df, detail_path)
+        logger.info(
+            "跳变事件总数: %d，涉及航班 %d 架次",
+            len(events_df),
+            aggs_df["flight_id"].nunique() if not aggs_df.empty else 0,
+        )
+    else:
+        logger.info("未生成任何日事件明细文件")
     logger.info("汇总表已写入: %s", summary_path)
     logger.info("事件明细总表: %s", detail_path)
     logger.info("日志输出: %s", log_path)

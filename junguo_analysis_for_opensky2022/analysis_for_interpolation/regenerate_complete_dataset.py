@@ -13,6 +13,24 @@ from functools import partial
 import traceback
 from datetime import datetime
 
+# 统一与 interpolate.py 的“限洞插值”策略：最大洞宽（秒）
+MAX_HOLE_SIZE = 20  # seconds
+DICO_HOLE_SIZE: dict[str, float] = {}
+
+
+def compute_holes(t: np.ndarray, inans: np.ndarray) -> np.ndarray:
+    """与 interpolate.py 等价的洞宽计算。
+
+    返回数组形状为 (n, 1) 或 (n,)；后续用于按列遮蔽：
+    - dt > MAX_HOLE_SIZE → 保持 NaN（不桥接大洞）
+    - dt 为 NaN → 同样保持 NaN（无法计算洞宽的边界情况）
+    """
+    tnan = t.copy()
+    tnan[inans] = np.nan
+    tf = pd.DataFrame({"tf": tnan}, dtype=np.float64).ffill().values
+    tb = pd.DataFrame({"tb": tnan}, dtype=np.float64).bfill().values
+    return tb - tf
+
 class CompleteDatasetGenerator:
     """完整数据集生成器"""
     
@@ -41,43 +59,49 @@ class CompleteDatasetGenerator:
         return df.loc[first_valid:last_valid].copy()
     
     def interpolate_column(self, series, method='linear'):
-        """插值单个列"""
+        """插值单个列（仅填内部洞，不做头尾外推）。"""
         if series.isna().all():
             return series
-        
-        # 对于track列，需要处理角度连续性
+
+        # 对于track列，需要处理角度连续性（同样仅填内部洞）
         if series.name == 'track':
             return self.interpolate_track_angle(series)
-        
-        # 其他列使用线性插值
-        return series.interpolate(method=method, limit_direction='both')
+
+        # 其他列使用线性插值，仅填内部洞，避免外推造成“延伸”斜坡
+        # pandas>=1.1 支持 limit_area='inside'
+        try:
+            return series.interpolate(method=method, limit_area='inside')
+        except TypeError:
+            # 兼容极老版本 pandas：退化为不限定，但后续仍用洞宽遮蔽
+            return series.interpolate(method=method)
     
     def interpolate_track_angle(self, track_series):
-        """插值track角度，处理0/360度边界"""
+        """插值track角度，处理0/360度边界，仅填内部洞。"""
         if track_series.isna().all():
             return track_series
-        
-        # 转换为弧度进行插值
+
         track_rad = np.deg2rad(track_series)
-        
-        # 使用复数表示角度，避免0/360度边界问题
         complex_track = np.exp(1j * track_rad)
-        
-        # 分别处理实部和虚部
         real_part = np.real(complex_track)
         imag_part = np.imag(complex_track)
-        
-        # 插值实部和虚部
-        real_interp = pd.Series(real_part, index=track_series.index).interpolate(method='linear', limit_direction='both')
-        imag_interp = pd.Series(imag_part, index=track_series.index).interpolate(method='linear', limit_direction='both')
-        
-        # 转换回角度
+
+        try:
+            real_interp = (
+                pd.Series(real_part, index=track_series.index)
+                .interpolate(method='linear', limit_area='inside')
+            )
+            imag_interp = (
+                pd.Series(imag_part, index=track_series.index)
+                .interpolate(method='linear', limit_area='inside')
+            )
+        except TypeError:
+            # 兼容极老版本 pandas：退化为不限定，后续仍用洞宽遮蔽
+            real_interp = pd.Series(real_part, index=track_series.index).interpolate(method='linear')
+            imag_interp = pd.Series(imag_part, index=track_series.index).interpolate(method='linear')
+
         interpolated_rad = np.angle(real_interp + 1j * imag_interp)
         interpolated_deg = np.rad2deg(interpolated_rad)
-        
-        # 确保角度在0-360范围内
         interpolated_deg = (interpolated_deg + 360) % 360
-        
         return pd.Series(interpolated_deg, index=track_series.index)
     
     def process_trajectory(self, df):
@@ -94,12 +118,33 @@ class CompleteDatasetGenerator:
         if df_trimmed.empty:
             return pd.DataFrame(), {'success': False, 'reason': 'No valid position data after trimming'}
         
-        # 对每个需要的列进行插值
+        # 对每个需要的列进行插值（仅填内部洞、不可跨大洞）
         df_interpolated = df_trimmed.copy()
-        
-        for col in ['latitude', 'longitude', 'altitude', 'groundspeed', 'track', 'vertical_rate']:
+
+        # 时间轴（秒）
+        t = ((df_interpolated['timestamp'] - df_interpolated['timestamp'].iloc[0]) / pd.to_timedelta(1, unit='s')).values.astype(np.float64)
+        df_interpolated['t'] = t
+
+        cols = ['latitude', 'longitude', 'altitude', 'groundspeed', 'track', 'vertical_rate']
+
+        # 预计算各列洞宽
+        ddt = {}
+        for col in cols:
+            if col in df_interpolated.columns:
+                ddt[col] = compute_holes(df_interpolated['t'].values, np.isnan(df_interpolated[col].values))
+
+        # 插值
+        for col in cols:
             if col in df_interpolated.columns:
                 df_interpolated[col] = self.interpolate_column(df_interpolated[col])
+
+        # 洞宽遮蔽：跨大洞或无法估计洞宽的位置保持 NaN
+        for col in cols:
+            if col in df_interpolated.columns and col in ddt:
+                df_interpolated[col] = df_interpolated[[col]].mask(ddt[col] > DICO_HOLE_SIZE.get(col, MAX_HOLE_SIZE))
+                df_interpolated[col] = df_interpolated[[col]].mask(np.isnan(ddt[col]))
+        # 清理临时列
+        df_interpolated = df_interpolated.drop(columns=['t'])
         
         # 验证插值结果
         missing_counts = {}
