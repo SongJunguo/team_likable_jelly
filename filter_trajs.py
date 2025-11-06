@@ -16,6 +16,7 @@ from filterclassic import (
     FilterCstSpeed,
     FilterIsolated,
     MyFilterDerivative,
+    FilterShortBurst,
 )
 
 # 历史注记：航班 248803487（2022-01-03）在 unwrap 操作上曾发现异常，保留此条以备排查
@@ -57,6 +58,33 @@ def read_trajectories(f, strategy):
             | MyFilterDerivative() # 4. 导数异常检查
             | FilterIsolated()     # 5. 孤立点检查
         )
+    elif strategy == "classic_shortburst":
+        # 在 classic 基础上增加“短簇剔除”（滑窗+密度，保守参数）
+        filter_chain = (
+            FilterCstLatLon()
+            | FilterCstPosition()
+            | FilterCstSpeed()
+            | MyFilterDerivative()
+            | FilterShortBurst()
+            | FilterIsolated()
+        )
+    elif strategy == "classic_dp":
+        # 双次三点投票（double-pass）：第一次默认阈值，第二次轻微放宽一阶阈值
+        dp2 = MyFilterDerivative(
+            altitude=dict(first=160, second=50),
+            groundspeed=dict(first=9.6, second=10),
+            track=dict(first=9.6, second=10),
+            latitude=dict(first=0.008, second=0.06),
+            longitude=dict(first=0.008, second=0.06),
+        )
+        filter_chain = (
+            FilterCstLatLon()
+            | FilterCstPosition()
+            | FilterCstSpeed()
+            | MyFilterDerivative()  # pass1
+            | dp2                   # pass2（仅一阶略放宽）
+            | FilterIsolated()
+        )
     else:
         raise Exception(f"strategy '{strategy}' not implemented")
 
@@ -89,7 +117,10 @@ def main():
     )
     parser.add_argument("-t_in", help="输入轨迹 parquet 文件路径")
     parser.add_argument("-t_out", help="输出过滤后 parquet 文件路径")
-    parser.add_argument("-strategy", help="过滤策略名称，目前支持 classic")
+    parser.add_argument(
+        "-strategy",
+        help="过滤策略名称: classic / classic_shortburst / classic_dp",
+    )
     args = parser.parse_args()
 
     df = read_trajectories(args.t_in, args.strategy)

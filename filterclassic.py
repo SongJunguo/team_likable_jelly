@@ -23,6 +23,8 @@ from traffic.algorithms import filters
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import math
+from pandas.api.types import is_datetime64_any_dtype
 
 
 from typing import (
@@ -256,3 +258,145 @@ class MyFilterDerivative(filters.FilterBase):
             data.loc[index[np.logical_or(killa >= 2, killv >= 2)], column] = np.nan
 
         return data
+
+
+class FilterShortBurst(filters.FilterBase):
+    """剔除短小异常簇（基于滑窗动力学+局部密度）。
+
+    设计目的：在 ``MyFilterDerivative`` 之后清理“段首/段尾残留的 1–2 点小突刺”，
+    与 ``FilterIsolated`` 互补。仅基于经纬度主判定；若高度存在，再做垂直复核。
+
+    规则摘要（保守默认）：
+    - 轻筛：以滑窗稳健基线（中位数/MAD）筛选“速度/加速度”可疑点。
+    - 精筛：仅对可疑点在 ±窗口内计算与邻域的 Haversine 距离密度：
+        - 若最近邻距离 > R_km 且半径内邻居 < N_min，则记为异常。
+    - 短簇门：仅删除连续异常长度 ≤ L_short 的簇（默认 2），避免误杀长异常段。
+    - 联动：若经纬被删除，同步置空 ``altitude/groundspeed/track``（若存在）。
+    """
+
+    def __init__(
+        self,
+        *,
+        time_column: str = "timestamp",
+        win_sec: int = 60,
+        seed_v_abs_kmh: float = 1000.0,
+        seed_v_ratio: float = 3.0,
+        seed_a_abs_mps2: float = 15.0,
+        seed_a_ratio: float = 5.0,
+        radius_km: float = 5.0,
+        min_neighbors: int = 3,
+        l_short: int = 2,
+    ) -> None:
+        self.time_column = time_column
+        self.win_sec = int(win_sec)
+        self.seed_v_abs_kmh = float(seed_v_abs_kmh)
+        self.seed_v_ratio = float(seed_v_ratio)
+        self.seed_a_abs_mps2 = float(seed_a_abs_mps2)
+        self.seed_a_ratio = float(seed_a_ratio)
+        self.radius_km = float(radius_km)
+        self.min_neighbors = int(min_neighbors)
+        self.l_short = int(l_short)
+
+    @staticmethod
+    def _haversine_km(lat1, lon1, lat2, lon2):
+        lat1 = np.radians(lat1)
+        lon1 = np.radians(lon1)
+        lat2 = np.radians(lat2)
+        lon2 = np.radians(lon2)
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = np.sin(dlat / 2.0) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0) ** 2
+        a = np.clip(a, 0.0, 1.0)
+        return 2.0 * 6371.0 * np.arcsin(np.sqrt(a))
+
+    def apply(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        if df.shape[0] <= 5:
+            return df
+
+        # 仅对经纬度可用的点进行判定
+        valid = (~df.latitude.isna()) & (~df.longitude.isna())
+        if valid.sum() <= 5:
+            return df
+        idx = np.where(valid.values)[0]
+        sub = df.loc[valid, [self.time_column, "latitude", "longitude"]].copy()
+        t = sub[self.time_column].values
+        # pandas 时区感知 dtype 为 'datetime64[ns, UTC]'，np.issubdtype 会报错；
+        # 使用 pandas 的类型检测更稳健。
+        if not is_datetime64_any_dtype(sub[self.time_column]):
+            sub[self.time_column] = pd.to_datetime(sub[self.time_column], utc=True, errors="coerce")
+            t = sub[self.time_column].values
+        t = t.astype("datetime64[ns]")
+        lat = sub["latitude"].values.astype(float)
+        lon = sub["longitude"].values.astype(float)
+
+        # 真实时间差与相邻速度/加速度
+        dt = (t[1:] - t[:-1]).astype("timedelta64[s]").astype(float)
+        dt[dt <= 0] = np.nan
+        dist = self._haversine_km(lat[:-1], lon[:-1], lat[1:], lon[1:])
+        v_kmh = np.full(lat.shape[0], np.nan)
+        v_kmh[1:] = dist / (dt / 3600.0)
+        v_mps = v_kmh / 3.6
+        dt2 = (t[2:] - t[:-2]).astype("timedelta64[s]").astype(float)
+        a_mps2 = np.full(lat.shape[0], np.nan)
+        a_mps2[1:-1] = 2 * (v_mps[2:] - v_mps[:-2]) / dt2
+
+        # 将窗口秒数换算为样本窗口（以中位 dt 估计）
+        med_dt = np.nanmedian(dt)
+        win_n = int(max(5, min(301, round(self.win_sec / med_dt))) if np.isfinite(med_dt) and med_dt > 0 else 61)
+        # 滑窗稳健基线
+        v_ser = pd.Series(v_kmh)
+        a_ser = pd.Series(a_mps2)
+        v_med = v_ser.rolling(win_n, center=True, min_periods=max(3, win_n // 3)).median().fillna(v_ser.median())
+        a_mad = (a_ser - a_ser.rolling(win_n, center=True, min_periods=max(3, win_n // 3)).median()).abs()
+        a_mad = a_mad.rolling(win_n, center=True, min_periods=max(3, win_n // 3)).median().fillna(a_mad.median())
+
+        cond_v = v_ser.values >= np.maximum(self.seed_v_abs_kmh, self.seed_v_ratio * v_med.values)
+        cond_a = np.abs(a_ser.values) >= np.maximum(self.seed_a_abs_mps2, self.seed_a_ratio * a_mad.values)
+        seeds = np.where(np.nan_to_num(cond_v | cond_a, nan=False))[0]
+        if seeds.size == 0:
+            return df
+
+        half_n = max(3, win_n // 2)
+        bad = np.zeros(lat.shape[0], dtype=bool)
+
+        for k in seeds:
+            i0 = max(0, k - half_n)
+            i1 = min(lat.shape[0] - 1, k + half_n)
+            jj = np.arange(i0, i1 + 1)
+            if jj.size < 5:
+                continue
+            # 与窗口内其它点的 Haversine 距离
+            dists = self._haversine_km(lat[k], lon[k], lat[jj], lon[jj])
+            dists = dists[1:]  # 排除自身第一个 0
+            dmin = np.nanmin(dists) if dists.size > 0 else np.inf
+            cnt = int(np.sum(dists <= self.radius_km))
+            if (dmin > self.radius_km) and (cnt < self.min_neighbors):
+                bad[k] = True
+
+        # 仅删除连续异常长度 ≤ L_short 的簇
+        if bad.any():
+            i = 0
+            while i < bad.size:
+                if bad[i]:
+                    j = i
+                    while j < bad.size and bad[j]:
+                        j += 1
+                    if (j - i) <= self.l_short:
+                        pass  # 保持删除
+                    else:
+                        bad[i:j] = False  # 长异常簇不在此处处理
+                    i = j
+                else:
+                    i += 1
+
+        if not bad.any():
+            return df
+
+        # 将标记位置映射回原 DataFrame 索引
+        bad_global = np.zeros(df.shape[0], dtype=bool)
+        bad_global[idx[bad]] = True
+        # 删除经纬度，联动屏蔽其它变量
+        cols = [c for c in ["latitude", "longitude", "altitude", "groundspeed", "track"] if c in df.columns]
+        df.loc[bad_global, cols] = np.nan
+        return df
