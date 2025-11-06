@@ -88,6 +88,7 @@ The directory names encode processing parameters:
 - Filtering pipeline overview: docs/数据清理流程.md
 - Derivative spike filter quickstart: learn_python/myfilterderivative_quickstart.ipynb
 - Build complete/perfect datasets: docs/trajectory_filter_learning/05_高质量与完美数据集生成.md
+- One‑click double‑pass filtering: docs/trajectory_filter_learning/06_清洗与分段复现手册.md
 
 # To Run the Code
 First setup your environment using the `environment.yml` file and edit the variable `FOLDER_DATA` in the `CONFIG` file, then just run the command below. Please be aware that it might take some time. To reduce this time depending on your computer you might want to use the option `-j` of `make`. For instance, `make -j4 cleantrajectories`, will launch 4 processes in parallel. In this whole project, each process takes no more than approximately 20GB of RAM. The only process that takes more is the training but this training phase does not use the `-j` of the `make` to run in parallel.

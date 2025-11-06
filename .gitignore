@@ -8,6 +8,9 @@ opensky_2024_PRC_dataset/
 opensky_2024_PRC_submissions/
 junguo_analysis_for_opensky2022/tmp_region_counts/
 
+# Generated reports
+reports/
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
