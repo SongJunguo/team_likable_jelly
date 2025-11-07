@@ -268,9 +268,16 @@ class FilterDerivativeLoop(filters.FilterBase):
     即提前收敛。通过 ``max_passes`` 控制最多迭代次数，避免意外死循环。
     """
 
-    def __init__(self, base: Optional[MyFilterDerivative] = None, *, max_passes: int = 6) -> None:
+    def __init__(
+        self,
+        base: Optional[MyFilterDerivative] = None,
+        *,
+        max_passes: int = 6,
+        min_passes: int = 1,
+    ) -> None:
         self.base = base or MyFilterDerivative()
         self.max_passes = max(1, int(max_passes))
+        self.min_passes = max(1, min(self.max_passes, int(min_passes)))
 
     def apply(self, data: pd.DataFrame) -> pd.DataFrame:
         df = data
@@ -278,12 +285,122 @@ class FilterDerivativeLoop(filters.FilterBase):
         if not monitored:
             return self.base.apply(df)
 
-        for _ in range(self.max_passes):
+        for idx in range(self.max_passes):
             before = df[monitored].isna().values.sum()
             df = self.base.apply(df)
             after = df[monitored].isna().values.sum()
-            if after == before:
+            if after == before and idx + 1 >= self.min_passes:
                 break
+        return df
+
+
+class FilterEdgeOutlier(filters.FilterBase):
+    """专门清理每条轨迹首尾的离群点。
+
+    规则：对每个 ``flight_id`` 取首个/最后一个具备经纬度的点，与其相邻点比较。
+    若地理距离大于 ``dist_threshold_km``、或瞬时速度大于 ``speed_threshold_kmh``、
+    或高度差超过 ``alt_threshold_ft``，则将该首/尾点视为异常并置 NaN。
+    """
+
+    def __init__(
+        self,
+        *,
+        time_column: str = "timestamp",
+        dist_threshold_km: float = 5.0,
+        speed_threshold_kmh: float = 800.0,
+        alt_threshold_ft: float = 3000.0,
+        columns: Optional[list[str]] = None,
+    ) -> None:
+        self.time_column = time_column
+        self.dist_threshold_km = float(dist_threshold_km)
+        self.speed_threshold_kmh = float(speed_threshold_kmh)
+        self.alt_threshold_ft = float(alt_threshold_ft)
+        self.columns = columns or [
+            "latitude",
+            "longitude",
+            "altitude",
+            "groundspeed",
+            "track",
+            "vertical_rate",
+        ]
+
+    @staticmethod
+    def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        lat1 = math.radians(lat1)
+        lon1 = math.radians(lon1)
+        lat2 = math.radians(lat2)
+        lon2 = math.radians(lon2)
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = (
+            math.sin(dlat / 2) ** 2
+            + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+        )
+        a = min(1.0, max(0.0, a))
+        return 2 * 6371.0 * math.asin(math.sqrt(a))
+
+    def _needs_drop(
+        self,
+        row_a: pd.Series,
+        row_b: pd.Series,
+    ) -> bool:
+        try:
+            ts_a = pd.to_datetime(row_a[self.time_column], utc=True)
+            ts_b = pd.to_datetime(row_b[self.time_column], utc=True)
+        except KeyError:
+            return False
+        if any(pd.isna(row_a.get(col)) for col in ("latitude", "longitude")):
+            return False
+        if any(pd.isna(row_b.get(col)) for col in ("latitude", "longitude")):
+            return False
+
+        dist_km = self._haversine_km(
+            float(row_a["latitude"]),
+            float(row_a["longitude"]),
+            float(row_b["latitude"]),
+            float(row_b["longitude"]),
+        )
+        dt = (ts_b - ts_a).total_seconds()
+        speed = float("inf") if dt <= 0 else dist_km / (dt / 3600.0)
+        alt_a = row_a.get("altitude")
+        alt_b = row_b.get("altitude")
+        alt_diff = 0.0
+        if pd.notna(alt_a) and pd.notna(alt_b):
+            alt_diff = abs(float(alt_a) - float(alt_b))
+
+        return (
+            dist_km >= self.dist_threshold_km
+            or speed >= self.speed_threshold_kmh
+            or alt_diff >= self.alt_threshold_ft
+        )
+
+    def apply(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty or "flight_id" not in df or self.time_column not in df:
+            return df
+
+        df = df.copy()
+        bad_idx: set[int] = set()
+
+        for _, group in df.groupby("flight_id"):
+            if group.shape[0] < 2:
+                continue
+            pos_valid = group[["latitude", "longitude"]].notna().all(axis=1)
+            valid_idx = group.index[pos_valid].to_list()
+            if len(valid_idx) < 2:
+                continue
+            first_idx, second_idx = valid_idx[0], valid_idx[1]
+            if self._needs_drop(df.loc[first_idx], df.loc[second_idx]):
+                bad_idx.add(first_idx)
+
+            last_idx, prev_idx = valid_idx[-1], valid_idx[-2]
+            if self._needs_drop(df.loc[last_idx], df.loc[prev_idx]):
+                bad_idx.add(last_idx)
+
+        if not bad_idx:
+            return df
+
+        cols = [c for c in self.columns if c in df.columns]
+        df.loc[list(bad_idx), cols] = np.nan
         return df
 
 

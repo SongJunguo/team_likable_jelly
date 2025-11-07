@@ -18,7 +18,9 @@ from filterclassic import (
     MyFilterDerivative,
     FilterShortBurst,
     FilterDerivativeLoop,
+    FilterEdgeOutlier,
 )
+from traffic.algorithms import filters
 
 # 历史注记：航班 248803487（2022-01-03）在 unwrap 操作上曾发现异常，保留此条以备排查
 from traffic.core import Traffic
@@ -30,13 +32,64 @@ def nointerpolate(x):
     return x
 
 
-def read_trajectories(f, strategy):
-    """读取轨迹文件并按策略执行滤波。
+def build_filter_chain(strategy: str) -> filters.FilterBase:
+    if strategy == "classic":
+        # 构建经典过滤器链：按数据清理流程文档的顺序组合多个过滤器
+        # 使用管道操作符 | 实现链式过滤，每个过滤器依次处理数据
+        return (
+            FilterCstLatLon()      # 1. 经纬度常数检查
+            | FilterCstPosition()  # 2. 位置常数检查  
+            | FilterCstSpeed()     # 3. 速度常数检查
+            | MyFilterDerivative() # 4. 导数异常检查
+            | FilterEdgeOutlier()  # 5. 段首/段尾离群剔除
+            | FilterIsolated()     # 6. 孤立点检查
+        )
+    elif strategy == "classic_shortburst":
+        # 在 classic 基础上增加“短簇剔除”（滑窗+密度，保守参数）
+        return (
+            FilterCstLatLon()
+            | FilterCstPosition()
+            | FilterCstSpeed()
+            | MyFilterDerivative()
+            | FilterShortBurst()
+            | FilterEdgeOutlier()
+            | FilterIsolated()
+        )
+    elif strategy == "classic_dp":
+        # 双次三点投票（double-pass）：第一次默认阈值，第二次轻微放宽一阶阈值
+        dp2 = MyFilterDerivative(
+            altitude=dict(first=160, second=50),
+            groundspeed=dict(first=9.6, second=10),
+            track=dict(first=9.6, second=10),
+            latitude=dict(first=0.008, second=0.06),
+            longitude=dict(first=0.008, second=0.06),
+        )
+        return (
+            FilterCstLatLon()
+            | FilterCstPosition()
+            | FilterCstSpeed()
+            | MyFilterDerivative()  # pass1
+            | dp2                   # pass2（仅一阶略放宽）
+            | FilterEdgeOutlier()
+            | FilterIsolated()
+        )
+    elif strategy == "classic_dp_loop":
+        dp_relaxed = MyFilterDerivative()
+        return (
+            FilterCstLatLon()
+            | FilterCstPosition()
+            | FilterCstSpeed()
+            | MyFilterDerivative()  # pass1
+            | FilterDerivativeLoop(base=dp_relaxed, max_passes=10, min_passes=4)
+            | FilterEdgeOutlier()
+            | FilterIsolated()
+        )
+    else:
+        raise Exception(f"strategy '{strategy}' not implemented")
 
-    :param f: 输入的 parquet 文件路径。
-    :param strategy: 滤波策略名称（目前仅支持 ``classic``）。
-    :return: 过滤完成的 ``pandas.DataFrame``。
-    """
+
+def read_trajectories(f, strategy):
+    """读取轨迹文件并按策略执行滤波。"""
 
     df = pd.read_parquet(f)
     for v in ["flight_id"]:
@@ -49,61 +102,7 @@ def read_trajectories(f, strategy):
         .reset_index(drop=True)
     )  # .head(10_000)
 
-    if strategy == "classic":
-        # 构建经典过滤器链：按数据清理流程文档的顺序组合多个过滤器
-        # 使用管道操作符 | 实现链式过滤，每个过滤器依次处理数据
-        filter_chain = (
-            FilterCstLatLon()      # 1. 经纬度常数检查
-            | FilterCstPosition()  # 2. 位置常数检查  
-            | FilterCstSpeed()     # 3. 速度常数检查
-            | MyFilterDerivative() # 4. 导数异常检查
-            | FilterIsolated()     # 5. 孤立点检查
-        )
-    elif strategy == "classic_shortburst":
-        # 在 classic 基础上增加“短簇剔除”（滑窗+密度，保守参数）
-        filter_chain = (
-            FilterCstLatLon()
-            | FilterCstPosition()
-            | FilterCstSpeed()
-            | MyFilterDerivative()
-            | FilterShortBurst()
-            | FilterIsolated()
-        )
-    elif strategy == "classic_dp":
-        # 双次三点投票（double-pass）：第一次默认阈值，第二次轻微放宽一阶阈值
-        dp2 = MyFilterDerivative(
-            altitude=dict(first=160, second=50),
-            groundspeed=dict(first=9.6, second=10),
-            track=dict(first=9.6, second=10),
-            latitude=dict(first=0.008, second=0.06),
-            longitude=dict(first=0.008, second=0.06),
-        )
-        filter_chain = (
-            FilterCstLatLon()
-            | FilterCstPosition()
-            | FilterCstSpeed()
-            | MyFilterDerivative()  # pass1
-            | dp2                   # pass2（仅一阶略放宽）
-            | FilterIsolated()
-        )
-    elif strategy == "classic_dp_loop":
-        dp_relaxed = MyFilterDerivative(
-            altitude=dict(first=160, second=50),
-            groundspeed=dict(first=9.6, second=10),
-            track=dict(first=9.6, second=10),
-            latitude=dict(first=0.008, second=0.06),
-            longitude=dict(first=0.008, second=0.06),
-        )
-        filter_chain = (
-            FilterCstLatLon()
-            | FilterCstPosition()
-            | FilterCstSpeed()
-            | MyFilterDerivative()  # pass1
-            | FilterDerivativeLoop(base=dp_relaxed, max_passes=10)  # pass2 循环至收敛
-            | FilterIsolated()
-        )
-    else:
-        raise Exception(f"strategy '{strategy}' not implemented")
+    filter_chain = build_filter_chain(strategy)
 
     # 执行过滤器链：应用所有过滤器并禁用内置插值
     dftrafficin = (
