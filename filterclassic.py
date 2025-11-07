@@ -260,6 +260,33 @@ class MyFilterDerivative(filters.FilterBase):
         return data
 
 
+class FilterDerivativeLoop(filters.FilterBase):
+    """对 ``MyFilterDerivative`` 结果做多轮迭代，直至不再新增 NaN。
+
+    适用于“残留 3+ 连点突刺”的情况：第一次使用默认阈值的 ``MyFilterDerivative``
+    清理大部分异常后，再用轻放宽阈值在局部循环执行，凡是每一轮没有新增 NaN 时
+    即提前收敛。通过 ``max_passes`` 控制最多迭代次数，避免意外死循环。
+    """
+
+    def __init__(self, base: Optional[MyFilterDerivative] = None, *, max_passes: int = 6) -> None:
+        self.base = base or MyFilterDerivative()
+        self.max_passes = max(1, int(max_passes))
+
+    def apply(self, data: pd.DataFrame) -> pd.DataFrame:
+        df = data
+        monitored = [c for c in getattr(self.base, "columns", {}).keys() if c in df.columns]
+        if not monitored:
+            return self.base.apply(df)
+
+        for _ in range(self.max_passes):
+            before = df[monitored].isna().values.sum()
+            df = self.base.apply(df)
+            after = df[monitored].isna().values.sum()
+            if after == before:
+                break
+        return df
+
+
 class FilterShortBurst(filters.FilterBase):
     """剔除短小异常簇（基于滑窗动力学+局部密度）。
 

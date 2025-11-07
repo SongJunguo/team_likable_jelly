@@ -7,8 +7,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY_SPLIT="$SCRIPT_DIR/split_segments_on_missing.py"
 
-IN_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/complete_high_quality_trajectories_v2_lim20s_inside"
-OUT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_trajectories_v2_lim20s_inside"
+# IN_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/complete_high_quality_trajectories_v2_lim20s_inside"
+# OUT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_trajectories_v2_lim20s_inside"
 PROCS=8
 # 必需列以空格分隔的字符串（便于在 xargs 的子 shell 中传递）
 REQ_COLS="latitude longitude altitude"

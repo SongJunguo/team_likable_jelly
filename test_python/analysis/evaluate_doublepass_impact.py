@@ -18,7 +18,7 @@
     --date 2022-03-06 \
     --raw-dir /workspace/.../rawtrajectories \
     --classic-dir /workspace/.../classic_filtered_trajectories \
-    --classic-dp-dir /workspace/.../classic_filtered_trajectories__doublepass_v1 \
+    --classic-dp-dir /workspace/.../classic_filtered_trajectories_doublepass_loop_v1 \
     --out-dir reports/doublepass_eval
 """
 

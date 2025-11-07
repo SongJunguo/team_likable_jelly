@@ -8,9 +8,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PY_DETECT="$REPO_ROOT/analysis/detect_perfect_jumps.py"
 
-DATA_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_trajs_doublepass_lim20s_inside_v1"
-OUT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/reports/jump_reports_segmented_doublepass_v1"
-PROCS=8
+DATA_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_trajs_doublepass_loop_lim20s_inside_v1"
+OUT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/reports/jump_reports_segmented_doublepass_loop_v1"
+PROCS=41
 DATE_FROM="2022-01-01"
 DATE_TO="2022-12-31"
 FORCE=0
@@ -71,4 +71,3 @@ else
 fi
 
 echo "✅ 跳变检测完成。输出目录: $OUT_DIR"
-

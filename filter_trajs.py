@@ -17,6 +17,7 @@ from filterclassic import (
     FilterIsolated,
     MyFilterDerivative,
     FilterShortBurst,
+    FilterDerivativeLoop,
 )
 
 # 历史注记：航班 248803487（2022-01-03）在 unwrap 操作上曾发现异常，保留此条以备排查
@@ -85,6 +86,22 @@ def read_trajectories(f, strategy):
             | dp2                   # pass2（仅一阶略放宽）
             | FilterIsolated()
         )
+    elif strategy == "classic_dp_loop":
+        dp_relaxed = MyFilterDerivative(
+            altitude=dict(first=160, second=50),
+            groundspeed=dict(first=9.6, second=10),
+            track=dict(first=9.6, second=10),
+            latitude=dict(first=0.008, second=0.06),
+            longitude=dict(first=0.008, second=0.06),
+        )
+        filter_chain = (
+            FilterCstLatLon()
+            | FilterCstPosition()
+            | FilterCstSpeed()
+            | MyFilterDerivative()  # pass1
+            | FilterDerivativeLoop(base=dp_relaxed, max_passes=10)  # pass2 循环至收敛
+            | FilterIsolated()
+        )
     else:
         raise Exception(f"strategy '{strategy}' not implemented")
 
@@ -119,7 +136,7 @@ def main():
     parser.add_argument("-t_out", help="输出过滤后 parquet 文件路径")
     parser.add_argument(
         "-strategy",
-        help="过滤策略名称: classic / classic_shortburst / classic_dp",
+        help="过滤策略名称: classic / classic_shortburst / classic_dp / classic_dp_loop",
     )
     args = parser.parse_args()
 

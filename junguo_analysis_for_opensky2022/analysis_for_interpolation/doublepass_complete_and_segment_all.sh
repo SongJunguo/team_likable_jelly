@@ -15,11 +15,11 @@ RUN_REGEN="$SCRIPT_DIR/regenerate_complete_all.sh"
 RUN_SPLIT="$SCRIPT_DIR/split_segments_all.sh"
 
 # 默认目录（可通过命令行覆盖）
-FILTER_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/classic_filtered_trajectories__doublepass_v1"
-COMPLETE_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/interpolate_trajs_doublepass_lim20s_inside_v1"
-SEGMENTED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_trajs_doublepass_lim20s_inside_v1"
+FILTER_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/classic_filtered_trajectories_doublepass_loop_v1"
+COMPLETE_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/interpolate_trajs_doublepass_loop_lim20s_inside_v1"
+SEGMENTED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_trajs_doublepass_loop_lim20s_inside_v1"
 IDS_FILE="/workspace/aircraft_trajectory/team_likable_jelly/high_quality_flight_ids.txt"
-PROCS=8
+PROCS=41
 DATE_FROM="2022-01-01"
 DATE_TO="2022-12-31"
 FORCE=0
@@ -37,7 +37,7 @@ usage() {
 
 用法示例：
   bash $0 \\
-    --filter-dir    /.../classic_filtered_trajectories__doublepass_v1 \\
+    --filter-dir    /.../classic_filtered_trajectories_doublepass_loop_v1 \\
     --complete-dir  /.../trajs_doublepass_lim20s_inside_v1 \\
     --segmented-dir /.../segmented_trajs_doublepass_lim20s_inside_v1 \\
     --procs 8 --from 2022-01-01 --to 2022-12-31
