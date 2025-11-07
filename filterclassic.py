@@ -294,6 +294,318 @@ class FilterDerivativeLoop(filters.FilterBase):
         return df
 
 
+class FilterMaxSpeed(filters.FilterBase):
+    """根据大圆距离估算整体地速，超阈值的相邻点直接剔除。"""
+
+    def __init__(self, *, max_speed_mps: float = 1000.0, time_column: str = "timestamp") -> None:
+        self.max_speed_mps = float(max_speed_mps)
+        self.time_column = time_column
+
+    @staticmethod
+    def _haversine_m(lat1, lon1, lat2, lon2):
+        lat1 = np.radians(lat1)
+        lon1 = np.radians(lon1)
+        lat2 = np.radians(lat2)
+        lon2 = np.radians(lon2)
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = np.sin(dlat / 2.0) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0) ** 2
+        c = 2.0 * np.arcsin(np.clip(np.sqrt(a), 0.0, 1.0))
+        return 6371000.0 * c
+
+    def apply(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty or "flight_id" not in df:
+            return df
+        if "latitude" not in df.columns or "longitude" not in df.columns:
+            return df
+
+        df = df.copy()
+        cols = [c for c in [
+            "latitude",
+            "longitude",
+            "altitude",
+            "groundspeed",
+            "track",
+            "vertical_rate",
+        ] if c in df.columns]
+        bad = np.zeros(len(df), dtype=bool)
+
+        for _, g in df.groupby("flight_id"):
+            idx = g.index.to_numpy()
+            lat = g["latitude"].to_numpy()
+            lon = g["longitude"].to_numpy()
+            ts = pd.to_datetime(g[self.time_column], utc=True, errors="coerce").values
+            valid = (~np.isnan(lat)) & (~np.isnan(lon)) & (~np.isnat(ts))
+            if valid.sum() < 2:
+                continue
+            lat = lat[valid]
+            lon = lon[valid]
+            ts = ts[valid].astype("datetime64[s]").astype(float)
+            idx_valid = idx[valid]
+            dt = np.diff(ts)
+            mask = dt > 0
+            if not np.any(mask):
+                continue
+            dist = self._haversine_m(lat[:-1], lon[:-1], lat[1:], lon[1:])
+            speed = np.zeros_like(dist)
+            speed[mask] = dist[mask] / dt[mask]
+            high = speed >= self.max_speed_mps
+            if not np.any(high):
+                continue
+            hit_idx = np.unique(np.concatenate((idx_valid[:-1][high], idx_valid[1:][high])))
+            bad[hit_idx] = True
+
+        if bad.any():
+            df.loc[bad, cols] = np.nan
+        return df
+
+
+class FilterAxisSpeed(filters.FilterBase):
+    """分别对纬度/经度/高度计算变化率，超过阈值即删除。"""
+
+    FT_TO_M = 0.3048
+    LAT_M_PER_DEG = 111_320.0
+
+    def __init__(
+        self,
+        *,
+        max_lat_deg_per_sec: float = 0.0063,
+        max_lon_deg_per_sec: float = 0.0063,
+        max_alt_ft_per_sec: float = 164.0,
+        time_column: str = "timestamp",
+    ) -> None:
+        self.max_lat_deg_per_sec = float(max_lat_deg_per_sec)
+        self.max_lon_deg_per_sec = float(max_lon_deg_per_sec)
+        self.max_alt_ft_per_sec = float(max_alt_ft_per_sec)
+        self.time_column = time_column
+
+    def _mark(self, idx, vals, times, threshold):
+        if idx.size < 2:
+            return np.array([], dtype=int)
+        dt = np.diff(times)
+        mask = dt > 0
+        if not np.any(mask):
+            return np.array([], dtype=int)
+        diff = np.abs(np.diff(vals))
+        rate = np.zeros_like(diff)
+        rate[mask] = diff[mask] / dt[mask]
+        high = rate >= threshold
+        if not np.any(high):
+            return np.array([], dtype=int)
+        return np.unique(np.concatenate((idx[:-1][high], idx[1:][high])))
+
+    def apply(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty or "flight_id" not in df:
+            return df
+        cols = [c for c in [
+            "latitude",
+            "longitude",
+            "altitude",
+            "groundspeed",
+            "track",
+            "vertical_rate",
+        ] if c in df.columns]
+        if not cols:
+            return df
+
+        df = df.copy()
+        bad = np.zeros(len(df), dtype=bool)
+
+        for _, g in df.groupby("flight_id"):
+            idx = g.index.to_numpy()
+            ts = pd.to_datetime(g[self.time_column], utc=True, errors="coerce").values
+            if ts.size == 0:
+                continue
+            ts_s = ts.astype("datetime64[s]").astype(float)
+
+            if "latitude" in g.columns:
+                lat = g["latitude"].to_numpy()
+                valid = (~np.isnan(lat)) & (~np.isnat(ts))
+                if valid.sum() >= 2:
+                    bad[self._mark(
+                        idx[valid],
+                        lat[valid],
+                        ts_s[valid],
+                        self.max_lat_deg_per_sec,
+                    )] = True
+
+            if "longitude" in g.columns and "latitude" in g.columns:
+                lon = g["longitude"].to_numpy()
+                lat = g["latitude"].to_numpy()
+                valid = (~np.isnan(lon)) & (~np.isnan(lat)) & (~np.isnat(ts))
+                if valid.sum() >= 2:
+                    lon_vals = lon[valid]
+                    lat_vals = lat[valid]
+                    ts_vals = ts_s[valid]
+                    idx_vals = idx[valid]
+                    dt = np.diff(ts_vals)
+                    mask = dt > 0
+                    if np.any(mask):
+                        meters = np.abs(np.diff(lon_vals)) * self.LAT_M_PER_DEG * np.cos(
+                            np.radians((lat_vals[:-1] + lat_vals[1:]) / 2.0)
+                        )
+                        rate = np.zeros_like(meters)
+                        rate[mask] = meters[mask] / dt[mask]
+                        high = rate >= (self.max_lon_deg_per_sec * self.LAT_M_PER_DEG)
+                        if np.any(high):
+                            bad[np.concatenate((idx_vals[:-1][high], idx_vals[1:][high]))] = True
+
+            if "altitude" in g.columns:
+                alt = g["altitude"].to_numpy()
+                valid = (~np.isnan(alt)) & (~np.isnat(ts))
+                if valid.sum() >= 2:
+                    bad[self._mark(
+                        idx[valid],
+                        alt[valid],
+                        ts_s[valid],
+                        self.max_alt_ft_per_sec,
+                    )] = True
+
+        if bad.any():
+            df.loc[bad, cols] = np.nan
+        return df
+
+
+class FilterMaxSpeedSkipNaN(filters.FilterBase):
+    """跨越NaN检测有效点之间的速度，捕获间接超速。
+
+    与 FilterMaxSpeed 的区别：
+    - FilterMaxSpeed: 只检测原始数据中直接相邻的点
+    - FilterMaxSpeedSkipNaN: 跳过中间的NaN，检测有效点之间的速度
+
+    用途：捕获过滤器删除中间点后形成的"间接超速"。
+
+    典型场景：
+    - 原始数据: 点0 → 点1(卡死) → 点2(卡死) → 点3(超速跳变)
+    - 过滤后: 点0 → NaN → NaN → NaN → 点7
+    - 问题: 点0→点7距离大、时间长，形成间接超速
+    - 本过滤器: 检测点0→点7，删除超速点对
+
+    循环策略：删除后可能形成新的超速，需要迭代检测直至收敛。
+    """
+
+    def __init__(
+        self,
+        *,
+        max_speed_mps: float = 600.0,
+        time_column: str = "timestamp",
+        max_iterations: int = 5,
+    ) -> None:
+        """初始化跨NaN速度过滤器。
+
+        :param max_speed_mps: 最大允许速度（米/秒），默认600 m/s
+        :param time_column: 时间列名，默认"timestamp"
+        :param max_iterations: 最大循环次数，默认5次
+        """
+        self.max_speed_mps = float(max_speed_mps)
+        self.time_column = time_column
+        self.max_iterations = max(1, int(max_iterations))
+
+    @staticmethod
+    def _haversine_m(lat1, lon1, lat2, lon2):
+        """计算两点间的Haversine距离（米）。"""
+        lat1 = np.radians(lat1)
+        lon1 = np.radians(lon1)
+        lat2 = np.radians(lat2)
+        lon2 = np.radians(lon2)
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = np.sin(dlat / 2.0) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0) ** 2
+        c = 2.0 * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
+        return 6371000.0 * c
+
+    def apply(self, df: pd.DataFrame) -> pd.DataFrame:
+        """应用过滤器，循环检测直至收敛。"""
+        if df.empty or "flight_id" not in df.columns:
+            return df
+
+        # 循环检测，直到无新增删除
+        for iteration in range(self.max_iterations):
+            # 统计删除前的NaN数量
+            if "latitude" in df.columns and "longitude" in df.columns:
+                before_count = (df["latitude"].isna() & df["longitude"].isna()).sum()
+            else:
+                break
+
+            df = self._apply_once(df)
+
+            # 统计删除后的NaN数量
+            after_count = (df["latitude"].isna() & df["longitude"].isna()).sum()
+
+            if after_count == before_count:
+                # 无新增删除，收敛
+                break
+
+        return df
+
+    def _apply_once(self, df: pd.DataFrame) -> pd.DataFrame:
+        """执行一次跨NaN速度检测。"""
+        df = df.copy()
+        cols = [
+            c
+            for c in [
+                "latitude",
+                "longitude",
+                "altitude",
+                "groundspeed",
+                "track",
+                "vertical_rate",
+            ]
+            if c in df.columns
+        ]
+
+        if "latitude" not in df.columns or "longitude" not in df.columns:
+            return df
+
+        # 使用set存储要删除的全局索引
+        bad_indices = set()
+
+        for _, g in df.groupby("flight_id"):
+            idx = g.index.to_numpy()
+
+            # 找到所有有效的经纬度点（非NaN）
+            lat = g["latitude"].to_numpy()
+            lon = g["longitude"].to_numpy()
+            ts = pd.to_datetime(g[self.time_column], utc=True, errors="coerce").values
+
+            valid = (~np.isnan(lat)) & (~np.isnan(lon)) & (~pd.isna(ts))
+
+            if valid.sum() < 2:
+                continue
+
+            # 提取有效点的索引、坐标和时间
+            valid_indices = idx[valid]
+            valid_lats = lat[valid]
+            valid_lons = lon[valid]
+            valid_times = ts[valid].astype("datetime64[s]").astype(float)
+
+            # 计算相邻有效点之间的速度
+            for i in range(len(valid_indices) - 1):
+                dt = valid_times[i + 1] - valid_times[i]
+
+                if dt <= 0:
+                    continue
+
+                # 计算Haversine距离
+                dist = self._haversine_m(
+                    valid_lats[i],
+                    valid_lons[i],
+                    valid_lats[i + 1],
+                    valid_lons[i + 1],
+                )
+                speed = dist / dt
+
+                if speed >= self.max_speed_mps:
+                    # 删除两个点（保守策略：无法判断哪个点异常，都删除）
+                    bad_indices.add(valid_indices[i])
+                    bad_indices.add(valid_indices[i + 1])
+
+        if bad_indices:
+            df.loc[list(bad_indices), cols] = np.nan
+
+        return df
+
+
 class FilterEdgeOutlier(filters.FilterBase):
     """专门清理每条轨迹首尾的离群点。
 

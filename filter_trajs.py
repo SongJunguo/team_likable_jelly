@@ -19,12 +19,28 @@ from filterclassic import (
     FilterShortBurst,
     FilterDerivativeLoop,
     FilterEdgeOutlier,
+    FilterMaxSpeed,
+    FilterAxisSpeed,
+    FilterMaxSpeedSkipNaN,
 )
 from traffic.algorithms import filters
 
 # 历史注记：航班 248803487（2022-01-03）在 unwrap 操作上曾发现异常，保留此条以备排查
 from traffic.core import Traffic
 import matplotlib.pyplot as plt
+
+DERIV_PARAMS = {
+    "latitude": dict(first=0.004, second=0.02),
+    "longitude": dict(first=0.004, second=0.02),
+    "altitude": dict(first=126, second=50),
+}
+
+
+def _make_derivative(**overrides):
+    params = {k: v.copy() for k, v in DERIV_PARAMS.items()}
+    for key, value in overrides.items():
+        params[key] = value
+    return MyFilterDerivative(**params)
 
 
 def nointerpolate(x):
@@ -37,12 +53,12 @@ def build_filter_chain(strategy: str) -> filters.FilterBase:
         # 构建经典过滤器链：按数据清理流程文档的顺序组合多个过滤器
         # 使用管道操作符 | 实现链式过滤，每个过滤器依次处理数据
         return (
-            FilterCstLatLon()      # 1. 经纬度常数检查
-            | FilterCstPosition()  # 2. 位置常数检查  
-            | FilterCstSpeed()     # 3. 速度常数检查
-            | MyFilterDerivative() # 4. 导数异常检查
-            | FilterEdgeOutlier()  # 5. 段首/段尾离群剔除
-            | FilterIsolated()     # 6. 孤立点检查
+            FilterCstLatLon()
+            | FilterCstPosition()
+            | FilterCstSpeed()
+            | _make_derivative()
+            | FilterEdgeOutlier()
+            | FilterIsolated()
         )
     elif strategy == "classic_shortburst":
         # 在 classic 基础上增加“短簇剔除”（滑窗+密度，保守参数）
@@ -50,38 +66,41 @@ def build_filter_chain(strategy: str) -> filters.FilterBase:
             FilterCstLatLon()
             | FilterCstPosition()
             | FilterCstSpeed()
-            | MyFilterDerivative()
+            | _make_derivative()
             | FilterShortBurst()
             | FilterEdgeOutlier()
             | FilterIsolated()
         )
     elif strategy == "classic_dp":
         # 双次三点投票（double-pass）：第一次默认阈值，第二次轻微放宽一阶阈值
-        dp2 = MyFilterDerivative(
-            altitude=dict(first=160, second=50),
-            groundspeed=dict(first=9.6, second=10),
-            track=dict(first=9.6, second=10),
-            latitude=dict(first=0.008, second=0.06),
-            longitude=dict(first=0.008, second=0.06),
-        )
+        dp2 = _make_derivative()
         return (
             FilterCstLatLon()
             | FilterCstPosition()
             | FilterCstSpeed()
-            | MyFilterDerivative()  # pass1
-            | dp2                   # pass2（仅一阶略放宽）
+            | _make_derivative()
+            | dp2
             | FilterEdgeOutlier()
             | FilterIsolated()
         )
     elif strategy == "classic_dp_loop":
-        dp_relaxed = MyFilterDerivative()
+        dp_relaxed = _make_derivative()
         return (
-            FilterCstLatLon()
+            # 第1道防线：在原始数据上过滤极端速度异常，避免时间聚合误判
+            FilterMaxSpeed(max_speed_mps=600)
+            | FilterAxisSpeed(
+                max_lat_deg_per_sec=0.0054,   # 600 m/s
+                max_lon_deg_per_sec=0.008,    # 全球适用（赤道890m/s，60°N 445m/s）
+                max_alt_ft_per_sec=164.0      # 50 m/s ≈ 9843 ft/min
+            )
+            | FilterCstLatLon()
             | FilterCstPosition()
             | FilterCstSpeed()
-            | MyFilterDerivative()  # pass1
+            | _make_derivative()    # pass1
             | FilterDerivativeLoop(base=dp_relaxed, max_passes=10, min_passes=4)
             | FilterEdgeOutlier()
+            # 第2道防线：跨越NaN检测间接超速（过滤器删除中间点后形成的超速）
+            | FilterMaxSpeedSkipNaN(max_speed_mps=600, max_iterations=5)
             | FilterIsolated()
         )
     else:

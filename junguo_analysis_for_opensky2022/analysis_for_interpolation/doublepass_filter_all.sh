@@ -17,10 +17,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 IN_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories"
-OUT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/classic_filtered_trajectories_doublepass_loop_v1"
-PROCS=32
+OUT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/classic_filtered_trajectories_doublepass_loop_v6"
+PROCS=72
 DATE_FROM="2022-01-01"
-DATE_TO="2022-12-31"
+DATE_TO="2022-02-28"
 FORCE=0
 DRYRUN=0
 STRATEGY="classic_dp_loop"
