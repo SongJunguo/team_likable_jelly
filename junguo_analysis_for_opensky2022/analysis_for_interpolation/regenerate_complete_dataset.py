@@ -17,6 +17,9 @@ from datetime import datetime
 MAX_HOLE_SIZE = 20  # seconds
 DICO_HOLE_SIZE: dict[str, float] = {}
 
+# 需要插值且必须满足 20s 限洞的核心测量列
+MEASUREMENT_COLUMNS = ['latitude', 'longitude', 'altitude', 'groundspeed', 'track', 'vertical_rate']
+
 
 def compute_holes(t: np.ndarray, inans: np.ndarray) -> np.ndarray:
     """与 interpolate.py 等价的洞宽计算。
@@ -35,7 +38,7 @@ class CompleteDatasetGenerator:
     """完整数据集生成器"""
     
     def __init__(self):
-        self.required_columns = ['flight_id', 'timestamp', 'latitude', 'longitude', 'altitude', 'groundspeed', 'track', 'vertical_rate']
+        self.required_columns = ['flight_id', 'timestamp', *MEASUREMENT_COLUMNS]
     
     def remove_head_tail_nan(self, df):
         """移除头尾的NaN值"""
@@ -109,23 +112,54 @@ class CompleteDatasetGenerator:
         if df.empty:
             return pd.DataFrame(), {'success': False, 'reason': 'Empty trajectory'}
         
-        # 按时间排序
-        df_sorted = df.sort_values('timestamp').reset_index(drop=True)
+        # 按时间排序并去重，确保后续能用时间戳重建 1 Hz 网格
+        df_sorted = df.sort_values('timestamp').drop_duplicates(subset='timestamp').reset_index(drop=True)
         
         # 移除头尾NaN
         df_trimmed = self.remove_head_tail_nan(df_sorted)
         
         if df_trimmed.empty:
             return pd.DataFrame(), {'success': False, 'reason': 'No valid position data after trimming'}
-        
+
+        # 记录列的原始 dtype，便于重采样后恢复（例如 flight_id 仍保持 int64）
+        original_dtypes = df_trimmed.dtypes.to_dict()
+
+        # 构建 1 Hz 时间网格，并将观测对齐到统一采样轴
+        time_grid = pd.date_range(
+            start=df_trimmed['timestamp'].iloc[0],
+            end=df_trimmed['timestamp'].iloc[-1],
+            freq='1S'
+        )
+        df_resampled = (
+            df_trimmed
+            .set_index('timestamp')
+            .reindex(time_grid)
+            .reset_index()
+            .rename(columns={'index': 'timestamp'})
+        )
+
+        # 元数据列使用前向/后向填充，避免因 1 Hz 网格产生的新行缺乏 flight_id 等信息
+        meta_cols = [c for c in df_resampled.columns if c not in MEASUREMENT_COLUMNS + ['timestamp']]
+        if meta_cols:
+            meta_filled = df_resampled[meta_cols].ffill().bfill()
+            for col in meta_cols:
+                target_dtype = original_dtypes.get(col)
+                if target_dtype is not None:
+                    try:
+                        meta_filled[col] = meta_filled[col].astype(target_dtype)
+                    except (ValueError, TypeError):
+                        # 字段可能含有混合类型，保持填充值即可
+                        pass
+            df_resampled[meta_cols] = meta_filled
+
         # 对每个需要的列进行插值（仅填内部洞、不可跨大洞）
-        df_interpolated = df_trimmed.copy()
+        df_interpolated = df_resampled.copy()
 
         # 时间轴（秒）
         t = ((df_interpolated['timestamp'] - df_interpolated['timestamp'].iloc[0]) / pd.to_timedelta(1, unit='s')).values.astype(np.float64)
         df_interpolated['t'] = t
 
-        cols = ['latitude', 'longitude', 'altitude', 'groundspeed', 'track', 'vertical_rate']
+        cols = MEASUREMENT_COLUMNS
 
         # 预计算各列洞宽
         ddt = {}
