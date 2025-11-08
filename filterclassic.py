@@ -873,3 +873,245 @@ class FilterShortBurst(filters.FilterBase):
         cols = [c for c in ["latitude", "longitude", "altitude", "groundspeed", "track"] if c in df.columns]
         df.loc[bad_global, cols] = np.nan
         return df
+
+
+class FilterMaxSpeedSkipNaNWithVoting(filters.FilterBase):
+    """跨NaN速度/加速度检测 + 三点投票法（整行删除版）。
+
+    核心特性：
+    1. **跨NaN检测**：忽略中间NaN，连接最近的有效点计算速度/加速度
+    2. **投票机制**（参考MyFilterDerivative）：
+       - 速度异常：i和i+1两点各得一票
+       - 加速度异常：i-1、i、i+1三点各得一票
+       - 票数≥阈值才删除（默认2票）
+    3. **整行删除**：删除位置+速度+天气+衍生特征（所有基于位置的数据）
+    4. **循环迭代**：删除后可能形成新的超速，需迭代直到收敛
+
+    技术细节（参考MyFilterDerivative）：
+    - 排除NaN后再计算（只用有效点）
+    - 真实时间间隔（timestamp列的dt.total_seconds()）
+    - 索引边界保护（确保不越界）
+
+    应用场景：
+    - 在FilterEdgeOutlier之后使用
+    - 捕获前面过滤器删除中间点后形成的"间接超速"
+
+    示例：
+        >>> # 在filter_trajs.py中使用
+        >>> chain = (
+        ...     FilterCstLatLon()
+        ...     | FilterCstPosition()
+        ...     | FilterCstSpeed()
+        ...     | FilterEdgeOutlier()
+        ...     | FilterMaxSpeedSkipNaNWithVoting(
+        ...         max_speed_mps=550,
+        ...         max_accel_mps2=15.0,
+        ...         max_iterations=10,
+        ...         vote_threshold=2
+        ...     )
+        ...     | FilterIsolated()
+        ... )
+    """
+
+    def __init__(
+        self,
+        *,
+        max_speed_mps: float = 550.0,      # 最大速度（米/秒）
+        max_accel_mps2: float = 15.0,      # 最大加速度（米/秒²）
+        time_column: str = "timestamp",
+        max_iterations: int = 10,          # 循环迭代次数
+        vote_threshold: int = 2,           # 投票阈值
+    ) -> None:
+        """初始化跨NaN速度/加速度投票过滤器。
+
+        :param max_speed_mps: 最大速度（米/秒），默认550 m/s（≈1980 km/h）
+        :param max_accel_mps2: 最大加速度（米/秒²），默认15 m/s²
+        :param time_column: 时间列名，默认"timestamp"
+        :param max_iterations: 最大循环次数，默认10
+        :param vote_threshold: 票数阈值（≥此值才删除），默认2
+        """
+        self.max_speed_mps = float(max_speed_mps)
+        self.max_accel_mps2 = float(max_accel_mps2)
+        self.time_column = time_column
+        self.max_iterations = max(1, int(max_iterations))
+        self.vote_threshold = int(vote_threshold)
+
+    @staticmethod
+    def _haversine_m(lat1, lon1, lat2, lon2):
+        """计算两点间的Haversine距离（米）。"""
+        lat1 = np.radians(lat1)
+        lon1 = np.radians(lon1)
+        lat2 = np.radians(lat2)
+        lon2 = np.radians(lon2)
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = np.sin(dlat / 2.0) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0) ** 2
+        c = 2.0 * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
+        return 6371000.0 * c
+
+    def apply(self, df: pd.DataFrame) -> pd.DataFrame:
+        """应用过滤器，循环检测直至收敛。"""
+        if df.empty or "flight_id" not in df.columns:
+            return df
+
+        # 循环检测，直到无新增删除
+        for iteration in range(self.max_iterations):
+            # 统计删除前的NaN数量（检查关键列）
+            if "latitude" in df.columns and "longitude" in df.columns:
+                before_count = (df["latitude"].isna() | df["longitude"].isna()).sum()
+            else:
+                break
+
+            df = self._apply_once(df)
+
+            # 统计删除后的NaN数量
+            after_count = (df["latitude"].isna() | df["longitude"].isna()).sum()
+
+            if after_count == before_count:
+                # 无新增删除，收敛
+                break
+
+        return df
+
+    def _apply_once(self, df: pd.DataFrame) -> pd.DataFrame:
+        """执行一次跨NaN速度/加速度检测 + 投票。
+
+        处理流程：
+        1. 清理部分经纬度点（只有经度或只有纬度）
+        2. 按flight_id分组处理
+        3. 对每组：
+           a. 提取有效点（跨NaN）
+           b. 计算速度和加速度（参考MyFilterDerivative的技术）
+           c. 投票：速度异常2点投票，加速度异常3点投票
+           d. 整行删除（票数≥阈值）：位置+速度+天气+衍生特征
+        """
+        df = df.copy()
+
+        # === 定义要删除的列（整行删除 + 天气联动删除） ===
+        # 逻辑：位置错误 → 基于位置的所有数据都不可信
+        cols_to_remove = [
+            c for c in [
+                # 核心观测列（位置+速度）
+                "latitude",
+                "longitude",
+                "altitude",
+                "geoaltitude",           # 地理高度
+                "groundspeed",
+                "track",
+                "vertical_rate",
+
+                # 天气参数（基于位置从气象模型获取）
+                "u_component_of_wind",   # 风场U分量
+                "v_component_of_wind",   # 风场V分量
+                "temperature",           # 温度
+                "specific_humidity",     # 比湿
+
+                # 衍生特征（基于位置/天气计算）
+                "gsx",                   # 地速X分量
+                "gsy",                   # 地速Y分量
+                "tasx",                  # 真空速X分量
+                "tasy",                  # 真空速Y分量
+                "tas",                   # 真空速
+                "wind",                  # 风速
+                "track_unwrapped",       # 解包后的航迹角
+            ]
+            if c in df.columns
+        ]
+
+        if "latitude" not in df.columns or "longitude" not in df.columns:
+            return df
+
+        # === 步骤1：清理部分经纬度点 ===
+        # 只有经度无纬度，或只有纬度无经度的点，会导致后续计算异常
+        partial_latlon = (
+            (df["latitude"].isna() & ~df["longitude"].isna())
+            | (~df["latitude"].isna() & df["longitude"].isna())
+        )
+        if partial_latlon.any():
+            df.loc[partial_latlon, cols_to_remove] = np.nan
+
+        # === 步骤2：按flight_id分组处理 ===
+        bad_indices = set()  # 全局索引，记录要删除的行
+
+        for _, g in df.groupby("flight_id", sort=False):
+            idx_global = g.index.to_numpy()  # 原DataFrame的全局索引
+
+            # === 步骤3a：提取有效点（跨NaN）===
+            # 参考MyFilterDerivative的处理：先排除NaN，构建有效点序列
+            lat = g["latitude"].to_numpy()
+            lon = g["longitude"].to_numpy()
+            ts = pd.to_datetime(g[self.time_column], utc=True, errors="coerce").values
+
+            # 只保留经纬度和时间都有效的点
+            valid_mask = (~np.isnan(lat)) & (~np.isnan(lon)) & (~pd.isna(ts))
+
+            if valid_mask.sum() < 2:
+                continue  # 有效点<2，无法计算速度
+
+            # 有效点的索引、坐标、时间
+            idx_valid = idx_global[valid_mask]
+            lat_valid = lat[valid_mask]
+            lon_valid = lon[valid_mask]
+            ts_valid = ts[valid_mask].astype("datetime64[s]").astype(float)
+
+            n = len(idx_valid)
+
+            # === 步骤3b：计算速度和加速度（参考MyFilterDerivative）===
+            # 真实时间间隔（秒）
+            dt = np.diff(ts_valid)
+            if np.any(dt <= 0):
+                # 时间非递增，跳过（不应该发生，但保险起见）
+                continue
+
+            # 计算Haversine距离（米）
+            dist = self._haversine_m(
+                lat_valid[:-1], lon_valid[:-1],
+                lat_valid[1:], lon_valid[1:]
+            )
+
+            # 速度（米/秒）- 对应索引i→i+1的速度
+            speed = dist / dt  # shape: (n-1,)
+
+            # 加速度（米/秒²）- 需要至少3个有效点
+            # 参考MyFilterDerivative:246行的计算方式
+            accel = np.full(n, np.nan)
+            if n >= 3:
+                # 计算中间点的加速度（索引1到n-2）
+                # accel[i] = 2 * (speed[i] - speed[i-1]) / (dt[i] + dt[i-1])
+                diff_speed = np.diff(speed)  # speed[i] - speed[i-1]
+                dt_avg = dt[1:] + dt[:-1]    # dt[i] + dt[i-1]
+                accel[1:-1] = 2.0 * diff_speed / dt_avg
+
+            # === 步骤3c：投票 ===
+            votes = np.zeros(n, dtype=int)
+
+            # 1) 速度投票：i和i+1各得一票
+            speed_spike = speed >= self.max_speed_mps
+            if np.any(speed_spike):
+                # 对索引i投票（前点）
+                votes[:-1] += speed_spike.astype(int)
+                # 对索引i+1投票（后点）
+                votes[1:] += speed_spike.astype(int)
+
+            # 2) 加速度投票：i-1、i、i+1各得一票
+            accel_spike = np.abs(accel) >= self.max_accel_mps2
+            # 只考虑有效计算的加速度（中间点）
+            accel_spike = np.nan_to_num(accel_spike, nan=False)
+            if np.any(accel_spike):
+                # 对i-1投票
+                votes[:-2] += accel_spike[1:-1].astype(int)
+                # 对i投票
+                votes[1:-1] += accel_spike[1:-1].astype(int)
+                # 对i+1投票
+                votes[2:] += accel_spike[1:-1].astype(int)
+
+            # === 步骤3d：整行删除（票数≥阈值）===
+            bad_mask = votes >= self.vote_threshold
+            if np.any(bad_mask):
+                bad_indices.update(idx_valid[bad_mask])
+
+        # === 步骤4：应用删除（整行删除所有观测列+天气列+衍生列）===
+        if bad_indices:
+            df.loc[list(bad_indices), cols_to_remove] = np.nan
+
+        return df

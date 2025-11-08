@@ -5,23 +5,44 @@
 """
 
 import pandas as pd
-import numpy as np
-import os
 from pathlib import Path
 import multiprocessing as mp
 from functools import partial
-import traceback
 from datetime import datetime
+import argparse
 
-def validate_single_file(file_path):
+DEFAULT_COLUMNS = ['latitude', 'longitude', 'altitude', 'groundspeed', 'track', 'vertical_rate']
+
+
+def load_dataframe(file_path):
+    path = Path(file_path)
+    suffix = path.suffix.lower()
+    if suffix == '.parquet':
+        return pd.read_parquet(path)
+    if suffix == '.csv':
+        return pd.read_csv(path)
+    raise ValueError(f"不支持的文件格式: {suffix} ({path})")
+
+
+def validate_single_file(task, required_columns=None, total_files=None):
     """验证单个插值文件的质量"""
     try:
+        if isinstance(task, tuple):
+            index, file_path = task
+        else:
+            index, file_path = None, task
+
+        file_path = Path(file_path)
+
+        if total_files and index is not None:
+            print(f"▶️ [{index}/{total_files}] 正在处理: {file_path.name}")
+
         # 读取数据
-        df = pd.read_parquet(file_path)
+        df = load_dataframe(file_path)
         
         if df.empty:
             return {
-                'file': os.path.basename(file_path),
+                'file': file_path.name,
                 'total_points': 0,
                 'trajectories': 0,
                 'missing_values': {},
@@ -30,7 +51,8 @@ def validate_single_file(file_path):
             }
         
         # 检查必需列
-        required_columns = ['latitude', 'longitude', 'altitude', 'groundspeed', 'track', 'vertical_rate']
+        if required_columns is None:
+            required_columns = DEFAULT_COLUMNS
         missing_values = {}
         total_missing = 0
         
@@ -46,7 +68,7 @@ def validate_single_file(file_path):
         trajectories = df['flight_id'].nunique() if 'flight_id' in df.columns else 0
         
         return {
-            'file': os.path.basename(file_path),
+            'file': file_path.name,
             'total_points': len(df),
             'trajectories': trajectories,
             'missing_values': missing_values,
@@ -57,7 +79,7 @@ def validate_single_file(file_path):
         
     except Exception as e:
         return {
-            'file': os.path.basename(file_path),
+            'file': file_path.name,
             'total_points': 0,
             'trajectories': 0,
             'missing_values': {},
@@ -65,39 +87,88 @@ def validate_single_file(file_path):
             'error': str(e)
         }
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="验证插值后的Parquet文件是否存在缺失值")
+    parser.add_argument(
+        "--input-dir",
+        default="interpolated_trajectories",
+        help="需要检查的Parquet目录，默认interpolated_trajectories"
+    )
+    parser.add_argument(
+        "--processes",
+        type=int,
+        default=min(mp.cpu_count(), 16),
+        help="并行进程数，默认min(16, CPU核心数)"
+    )
+    parser.add_argument(
+        "--output",
+        help="验证报告输出文件，默认生成带时间戳的txt"
+    )
+    parser.add_argument(
+        "--columns",
+        nargs="+",
+        default=DEFAULT_COLUMNS,
+        help="需要检查缺失值的列名列表"
+    )
+    parser.add_argument(
+        "--suffixes",
+        nargs="+",
+        default=['.parquet'],
+        help="需要检查的文件后缀，默认只检查.parquet"
+    )
+    return parser.parse_args()
+
+
 def main():
     """主函数"""
+    args = parse_args()
+
+    input_dir = Path(args.input_dir)
+    if not input_dir.exists():
+        print(f"❌ 插值数据目录不存在: {input_dir}")
+        return
+
     print("🔍 开始验证插值质量")
     print("=" * 60)
-    
-    # 插值数据目录
-    interpolated_dir = "interpolated_trajectories"
-    
-    if not os.path.exists(interpolated_dir):
-        print(f"❌ 插值数据目录不存在: {interpolated_dir}")
-        return
-    
+
+    suffixes = []
+    for suffix in args.suffixes:
+        suffix = suffix.lower()
+        if not suffix.startswith('.'):
+            suffix = f".{suffix}"
+        suffixes.append(suffix)
+
     # 获取所有插值文件
-    interpolated_files = [f for f in os.listdir(interpolated_dir) if f.endswith('.parquet')]
-    interpolated_files.sort()
-    
-    print(f"找到 {len(interpolated_files)} 个插值文件")
-    
+    interpolated_files = sorted(
+        [f for f in input_dir.iterdir() if f.is_file() and f.suffix.lower() in suffixes]
+    )
+    total_files = len(interpolated_files)
+    print(f"找到 {total_files} 个插值文件")
+
     if not interpolated_files:
         print("❌ 没有找到插值文件")
         return
-    
+
     # 多进程验证
     print("🔄 开始多进程验证...")
-    num_processes = min(mp.cpu_count(), 16)
+    num_processes = max(1, min(args.processes, mp.cpu_count()))
     print(f"使用 {num_processes} 个进程")
-    
-    # 准备文件路径
-    file_paths = [os.path.join(interpolated_dir, f) for f in interpolated_files]
-    
-    # 执行多进程验证
+
+    # 准备任务列表
+    tasks = list(enumerate(interpolated_files, start=1))
+
+    validate_func = partial(
+        validate_single_file,
+        required_columns=args.columns,
+        total_files=total_files
+    )
+
+    # 执行多进程验证并打印进度
+    results = []
     with mp.Pool(processes=num_processes) as pool:
-        results = pool.map(validate_single_file, file_paths)
+        for completed, result in enumerate(pool.imap_unordered(validate_func, tasks), start=1):
+            results.append(result)
+            print(f"✅ 已完成 {completed}/{total_files}: {result['file']}")
     
     # 分析结果
     print("\n📊 验证结果统计:")
@@ -118,7 +189,7 @@ def main():
     error_files = []
     
     # 初始化列统计
-    required_columns = ['latitude', 'longitude', 'altitude', 'groundspeed', 'track', 'vertical_rate']
+    required_columns = args.columns
     for col in required_columns:
         total_stats['missing_by_column'][col] = 0
     
@@ -184,12 +255,15 @@ def main():
             print(f"     ... 还有 {len(error_files) - 5} 个错误文件")
     
     # 生成验证报告
-    report_file = f"interpolation_quality_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    if args.output:
+        report_file = args.output
+    else:
+        report_file = f"interpolation_quality_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     with open(report_file, 'w', encoding='utf-8') as f:
         f.write("插值质量验证报告\n")
         f.write("=" * 50 + "\n\n")
         f.write(f"验证时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"验证文件数: {len(interpolated_files)}\n\n")
+        f.write(f"验证文件数: {total_files}\n\n")
         
         f.write("验证结果:\n")
         f.write(f"  总文件数: {total_stats['total_files']}\n")

@@ -22,6 +22,7 @@ from filterclassic import (
     FilterMaxSpeed,
     FilterAxisSpeed,
     FilterMaxSpeedSkipNaN,
+    FilterMaxSpeedSkipNaNWithVoting,
 )
 from traffic.algorithms import filters
 
@@ -71,16 +72,34 @@ def build_filter_chain(strategy: str) -> filters.FilterBase:
             | FilterEdgeOutlier()
             | FilterIsolated()
         )
-    elif strategy == "classic_dp":
-        # 双次三点投票（double-pass）：第一次默认阈值，第二次轻微放宽一阶阈值
-        dp2 = _make_derivative()
+    elif strategy == "clean_segment_interp":
+        """
+        清洗-分段-插值流程的过滤策略（Clean-Segment-Interpolate）
+
+        设计理念：
+        - 严格的过滤顺序（参考todo.md）
+        - 使用带投票的跨NaN速度检测（更稳健）
+        - 整行删除（位置+速度+天气+衍生特征）
+        - 为后续分段和插值提供干净的数据
+
+        与classic_dp_loop的区别：
+        - 不使用MyFilterDerivative（改用FilterMaxSpeedSkipNaNWithVoting）
+        - 更严格的整行删除策略
+        - 天气参数联动删除
+
+        流程：过滤（此策略） → 切分 → 插值
+        """
         return (
             FilterCstLatLon()
             | FilterCstPosition()
             | FilterCstSpeed()
-            | _make_derivative()
-            | dp2
             | FilterEdgeOutlier()
+            | FilterMaxSpeedSkipNaNWithVoting(
+                max_speed_mps=550,       # 可配置：550或600 m/s
+                max_accel_mps2=15.0,     # 加速度阈值
+                max_iterations=10,       # 循环直到收敛
+                vote_threshold=2         # 投票阈值
+            )
             | FilterIsolated()
         )
     elif strategy == "classic_dp_loop":
@@ -154,7 +173,7 @@ def main():
     parser.add_argument("-t_out", help="输出过滤后 parquet 文件路径")
     parser.add_argument(
         "-strategy",
-        help="过滤策略名称: classic / classic_shortburst / classic_dp / classic_dp_loop",
+        help="过滤策略名称: classic / classic_shortburst / classic_dp_loop / clean_segment_interp",
     )
     args = parser.parse_args()
 

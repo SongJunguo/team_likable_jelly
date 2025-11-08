@@ -32,7 +32,7 @@ def check_segment_holes(segment_flight_id, date_str="2022-12-28"):
     # 1. 检查过滤后的数据（插值前）
     print("[1] 检查过滤后数据（插值前）")
     print("-" * 100)
-    filtered_dir = base_dir / "classic_filtered_trajectories_doublepass_loop_v7"
+    filtered_dir = base_dir / "classic_filtered_trajectories_doublepass_loop_v8"
     filtered_file = filtered_dir / f"{date_str}.parquet"
 
     if filtered_file.exists():

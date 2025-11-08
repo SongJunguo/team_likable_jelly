@@ -129,7 +129,9 @@ conda activate opensky && python All_trajectory_NaN_analysis.py \
 6. **check_nan_values.py** - 验证插值数据是否包含NaN值
    - 检查插值处理后数据的质量
    - 统计各列的缺失值数量
-   - 生成详细的验证报告
+   - 命令行参数：`--input-dir`（数据目录）、`--processes`、`--columns`、`--suffixes`、`--output`
+   - 默认输出 `[当前/总数]` 进度以及对应文件名，便于观察大批量任务进展
+   - 生成详细的验证报告，可搭配 `run_check_nan_reports.sh` 一键执行
    
 7. **validate_trajectory_count.py** - 验证轨迹数量是否足够
    - 统计最终数据集的轨迹数量
@@ -185,11 +187,26 @@ print(df[['latitude_missing_rate', 'longitude_missing_rate', 'altitude_missing_r
 ### 3. 数据验证
 ```bash
 # 验证插值数据质量 (检查NaN值)
-python check_nan_values.py --data_dir [插值数据目录]
+python check_nan_values.py --input-dir [插值数据目录]
 
 # 验证插值好的轨迹数量是否足够 高质量轨迹ID的txt文件 的轨迹数量
 python validate_trajectory_count.py --data_dir [最终数据集目录] --target_count [预期轨迹数]
 ```
+
+### 4. 快速检测 jump_reports_segmented_v8_csaps
+```bash
+# 进入项目根目录后执行
+junguo_analysis_for_opensky2022/analysis_for_interpolation/run_check_nan_reports.sh
+
+# 更改数据目录或附带 check_nan_values.py 的额外参数
+junguo_analysis_for_opensky2022/analysis_for_interpolation/run_check_nan_reports.sh \
+  --data-dir /workspace/aircraft_trajectory/team_likable_jelly/reports/jump_reports_segmented_v8_csaps \
+  --processes 32
+```
+
+- 默认数据目录：`opensky_2024_PRC_dataset/segmented_trajs_speed_limited_v8_csaps`
+- `--data-dir/-d` 用于改用其它目录，脚本会自动打印真实路径并把剩余参数透传给 `check_nan_values.py`
+- `--processes/-p` 让脚本内部直接指定并行进程数（相当于传递给 `check_nan_values.py --processes`）
 
 ## ⚠️ 注意事项
 

@@ -32,7 +32,7 @@ def analyze_interpolation_around_anomaly(original_flight_id, date_str, anomaly_t
     """
 
     base_dir = Path("/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset")
-    filtered_dir = base_dir / "classic_filtered_trajectories_doublepass_loop_v7"
+    filtered_dir = base_dir / "classic_filtered_trajectories_doublepass_loop_v8"
     complete_dir = base_dir / "interpolate_trajs_doublepass_loop_lim20s_inside_v7"
 
     print(f"\n{'='*100}")

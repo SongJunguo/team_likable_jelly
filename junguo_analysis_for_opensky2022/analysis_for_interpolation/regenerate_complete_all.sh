@@ -17,7 +17,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY_RUN="$SCRIPT_DIR/regenerate_complete_sample.py"
 
-IN_DIR=/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/classic_filtered_trajectories_doublepass_loop_v7
+IN_DIR=/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/classic_filtered_trajectories_doublepass_loop_v8
 OUT_DIR=/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/interpolate_trajs_doublepass_loop_lim20s_inside_v8
 IDS_FILE=/workspace/aircraft_trajectory/team_likable_jelly/high_quality_flight_ids.txt
 PROCS=8

@@ -9,7 +9,7 @@ RUN_JUMP="$SCRIPT_DIR/run_detect_jumps_all.sh"
 PY_INTERPOLATE="$REPO_ROOT/interpolate.py"
 
 RAW_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories"
-FILTER_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/classic_filtered_trajectories_doublepass_loop_v7"
+FILTER_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/classic_filtered_trajectories_doublepass_loop_v8"
 INTERP_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/interpolate_trajs_doublepass_loop_lim20s_inside_v8_csaps"
 SEGMENT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_trajs_speed_limited_v8_csaps"
 JUMP_DIR="/workspace/aircraft_trajectory/team_likable_jelly/reports/jump_reports_segmented_v8_csaps"
