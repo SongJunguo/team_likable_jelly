@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DATE="${1:-2022-02-20}"
-FLIGHT_ID="${2:-249644002}"
+DATE="${1:-2022-12-28}"
+FLIGHT_ID="${2:-257987764}"
 STRATEGY="${3:-classic_dp_loop}"
 RAW_DIR="${RAW_DIR:-/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories}"
 OUT_DIR="${OUT_DIR:-reports/single_flight}"

@@ -16,12 +16,12 @@ RUN_SPLIT="$SCRIPT_DIR/split_segments_all.sh"
 
 # 默认目录（可通过命令行覆盖）
 FILTER_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/classic_filtered_trajectories_doublepass_loop_v7"
-COMPLETE_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/interpolate_trajs_doublepass_loop_lim20s_inside_v7"
-SEGMENTED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_trajs_doublepass_loop_lim20s_inside_v7"
+COMPLETE_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/interpolate_trajs_doublepass_loop_lim20s_inside_v7_test1hz"
+SEGMENTED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_trajs_doublepass_loop_lim20s_inside_v7_test1hz"
 IDS_FILE="/workspace/aircraft_trajectory/team_likable_jelly/high_quality_flight_ids.txt"
 PROCS=41
-DATE_FROM="2022-01-01"
-DATE_TO="2022-12-31"
+DATE_FROM="2022-12-28"
+DATE_TO="2022-12-28"
 FORCE=0
 DRYRUN=0
 

@@ -15,6 +15,7 @@ MAX_HOLE_SIZE = 20 # seconds
 
 
 DICO_HOLE_SIZE = {}
+MEASUREMENT_COLUMNS = ['latitude', 'longitude', 'altitude', 'groundspeed', 'vertical_rate', 'track']
 
 def spline(t,v,smooth,derivative=False):
     '''
@@ -44,11 +45,42 @@ def compute_holes(t,inans):
     tb = pd.DataFrame({"tb":tnan}, dtype=np.float64).bfill().values
     return tb - tf
 
+def resample_to_1hz(df: pd.DataFrame) -> pd.DataFrame:
+    """重建 1 Hz 时间网格，保持原观测并填充元数据。"""
+    if df.empty:
+        return df
+
+    df_sorted = df.sort_values('timestamp').drop_duplicates(subset='timestamp').reset_index(drop=True)
+    rng = pd.date_range(start=df_sorted['timestamp'].iloc[0], end=df_sorted['timestamp'].iloc[-1], freq='1S')
+
+    resampled = (
+        df_sorted
+        .set_index('timestamp')
+        .reindex(rng)
+        .reset_index()
+        .rename(columns={'index': 'timestamp'})
+    )
+
+    meta_cols = [c for c in resampled.columns if c not in MEASUREMENT_COLUMNS + ['timestamp']]
+    if meta_cols:
+        filled = resampled[meta_cols].ffill().bfill()
+        for col in meta_cols:
+            original_dtype = df_sorted[col].dtype if col in df_sorted.columns else None
+            if original_dtype is not None:
+                try:
+                    filled[col] = filled[col].astype(original_dtype)
+                except (ValueError, TypeError):
+                    pass
+        resampled[meta_cols] = filled
+    return resampled
+
+
 def interpolate(df,smooth):
     '''
     Smooth the different measurements using splines
     does not interpolate between measurements separated by 20 seconds
     '''
+    df = resample_to_1hz(df)
     t = ((df.timestamp - df.timestamp.iloc[0]) / pd.to_timedelta(1, unit="s")).values.astype(np.float64)
     df["t"] = t
     masknan = np.isnan(df["track"].values)

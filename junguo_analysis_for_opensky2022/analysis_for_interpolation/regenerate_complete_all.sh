@@ -17,13 +17,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY_RUN="$SCRIPT_DIR/regenerate_complete_sample.py"
 
-# IN_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/classic_filtered_trajectories"
-# OUT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/complete_high_quality_trajectories_v2_lim20s_inside"
-IDS_FILE="/workspace/aircraft_trajectory/team_likable_jelly/high_quality_flight_ids.txt"
-PROCS="8"
-DATE_FROM="2022-01-01"
-DATE_TO="2022-12-31"
-FORCE="0"
+IN_DIR=/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/classic_filtered_trajectories_doublepass_loop_v7
+OUT_DIR=/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/interpolate_trajs_doublepass_loop_lim20s_inside_v8
+IDS_FILE=/workspace/aircraft_trajectory/team_likable_jelly/high_quality_flight_ids.txt
+PROCS=8
+DATE_FROM=2022-12-28
+DATE_TO=2022-12-28
+FORCE=0
 DRYRUN="0"
 
 while [[ $# -gt 0 ]]; do
