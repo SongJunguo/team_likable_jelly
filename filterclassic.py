@@ -539,7 +539,12 @@ class FilterMaxSpeedSkipNaN(filters.FilterBase):
         return df
 
     def _apply_once(self, df: pd.DataFrame) -> pd.DataFrame:
-        """执行一次跨NaN速度检测。"""
+        """执行一次跨NaN速度检测。
+
+        处理流程：
+        1. 清理部分经纬度点（只有经度或只有纬度的点）
+        2. 检测有效点之间的速度，删除超速点对
+        """
         df = df.copy()
         cols = [
             c
@@ -557,6 +562,18 @@ class FilterMaxSpeedSkipNaN(filters.FilterBase):
         if "latitude" not in df.columns or "longitude" not in df.columns:
             return df
 
+        # === 步骤1：清理部分经纬度点 ===
+        # 原因：MyFilterDerivative等过滤器可能只删除单个坐标维度，
+        # 导致"只有纬度无经度"或"只有经度无纬度"的数据质量问题。
+        # 这些部分坐标点在插值时可能借用邻近坐标，产生异常。
+        partial_latlon = (df["latitude"].isna() & ~df["longitude"].isna()) | \
+                         (~df["latitude"].isna() & df["longitude"].isna())
+
+        if partial_latlon.any():
+            # 将部分坐标点完全清空（经纬度+其他相关字段）
+            df.loc[partial_latlon, cols] = np.nan
+
+        # === 步骤2：检测有效点之间的速度 ===
         # 使用set存储要删除的全局索引
         bad_indices = set()
 

@@ -87,6 +87,88 @@ def test_skipnan_filter():
         return False
 
 
+def test_partial_coords():
+    """测试部分坐标点的清理功能"""
+
+    print("\n" + "=" * 70)
+    print("测试部分坐标点清理")
+    print("=" * 70)
+
+    # 构造包含部分坐标的测试数据
+    data = {
+        'flight_id': [1] * 10,
+        'timestamp': pd.date_range('2022-02-21 08:40:00', periods=10, freq='1s', tz='UTC'),
+        'latitude': [
+            41.0,      # 点0 - 正常
+            41.1,      # 点1 - 正常
+            41.2,      # 点2 - 只有纬度（经度NaN）
+            41.3,      # 点3 - 只有纬度（经度NaN）
+            np.nan,    # 点4 - 只有经度（纬度NaN）
+            41.5,      # 点5 - 正常
+            41.6,      # 点6 - 正常
+            np.nan,    # 点7 - 经纬度都NaN
+            41.8,      # 点8 - 正常
+            41.9,      # 点9 - 正常
+        ],
+        'longitude': [
+            120.0,     # 点0
+            120.1,     # 点1
+            np.nan,    # 点2 - 经度NaN
+            np.nan,    # 点3 - 经度NaN
+            120.4,     # 点4 - 只有经度
+            120.5,     # 点5
+            120.6,     # 点6
+            np.nan,    # 点7 - 经度NaN
+            120.8,     # 点8
+            120.9,     # 点9
+        ],
+        'altitude': [1000.0] * 10,
+    }
+
+    df = pd.DataFrame(data)
+
+    print("\n【测试数据】")
+    print("点0-1: 正常（经纬度都有）")
+    print("点2-3: 只有纬度（经度NaN）← 应该被清理")
+    print("点4:   只有经度（纬度NaN）← 应该被清理")
+    print("点5-6: 正常（经纬度都有）")
+    print("点7:   经纬度都NaN")
+    print("点8-9: 正常（经纬度都有）")
+
+    # 应用过滤器
+    filter_skipnan = FilterMaxSpeedSkipNaN(max_speed_mps=600, max_iterations=5)
+    df_filtered = filter_skipnan.apply(df)
+
+    print("\n【过滤后结果】")
+    for i in range(10):
+        row = df_filtered.iloc[i]
+        lat = row['latitude']
+        lon = row['longitude']
+
+        if pd.isna(lat) and pd.isna(lon):
+            status = "经纬度都NaN"
+        elif pd.isna(lat):
+            status = f"只有经度（异常！）"
+        elif pd.isna(lon):
+            status = f"只有纬度（异常！）"
+        else:
+            status = f"({lat:.1f}, {lon:.1f})"
+
+        print(f"点{i}: {status}")
+
+    # 验证结果
+    print("\n【验证】")
+    partial_after = (df_filtered['latitude'].isna() & ~df_filtered['longitude'].isna()) | \
+                    (~df_filtered['latitude'].isna() & df_filtered['longitude'].isna())
+
+    if not partial_after.any():
+        print("✅ 测试通过：所有部分坐标点都被清理（点2-4）")
+        return True
+    else:
+        print(f"❌ 测试失败：仍有{partial_after.sum()}个部分坐标点")
+        return False
+
+
 def test_real_data():
     """测试真实数据中的异常航班"""
 
@@ -144,15 +226,19 @@ def test_real_data():
 if __name__ == '__main__':
     print("\n" + "🔬 " + "测试 FilterMaxSpeedSkipNaN 过滤器".center(66) + " 🔬\n")
 
-    # 测试1：构造数据测试
+    # 测试1：跨NaN速度检测
     result1 = test_skipnan_filter()
 
-    # 测试2：真实数据测试
-    result2 = test_real_data()
+    # 测试2：部分坐标点清理
+    result2 = test_partial_coords()
+
+    # 测试3：真实数据测试
+    result3 = test_real_data()
 
     print("\n" + "=" * 70)
     print("总结")
     print("=" * 70)
-    print(f"构造数据测试: {'✅ 通过' if result1 else '❌ 失败'}")
-    print(f"真实数据测试: {'✅ 通过' if result2 else '❌ 失败'}")
+    print(f"跨NaN速度检测: {'✅ 通过' if result1 else '❌ 失败'}")
+    print(f"部分坐标清理: {'✅ 通过' if result2 else '❌ 失败'}")
+    print(f"真实数据测试: {'✅ 通过' if result3 else '❌ 失败'}")
     print()

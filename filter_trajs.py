@@ -87,7 +87,7 @@ def build_filter_chain(strategy: str) -> filters.FilterBase:
         dp_relaxed = _make_derivative()
         return (
             # 第1道防线：在原始数据上过滤极端速度异常，避免时间聚合误判
-            FilterMaxSpeed(max_speed_mps=600)
+            FilterMaxSpeed(max_speed_mps=550)
             | FilterAxisSpeed(
                 max_lat_deg_per_sec=0.0054,   # 600 m/s
                 max_lon_deg_per_sec=0.008,    # 全球适用（赤道890m/s，60°N 445m/s）
@@ -100,7 +100,7 @@ def build_filter_chain(strategy: str) -> filters.FilterBase:
             | FilterDerivativeLoop(base=dp_relaxed, max_passes=10, min_passes=4)
             | FilterEdgeOutlier()
             # 第2道防线：跨越NaN检测间接超速（过滤器删除中间点后形成的超速）
-            | FilterMaxSpeedSkipNaN(max_speed_mps=600, max_iterations=5)
+            | FilterMaxSpeedSkipNaN(max_speed_mps=550, max_iterations=5)
             | FilterIsolated()
         )
     else:
