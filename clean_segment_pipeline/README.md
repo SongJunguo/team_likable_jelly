@@ -129,9 +129,11 @@ bash 04_quality_check.sh  # 检查最终结果
 ### 过滤参数
 ```bash
 FILTER_STRATEGY="clean_segment_interp"  # 策略名
-MAX_SPEED_MPS=550        # 速度阈值（550 m/s ≈ 1980 km/h）
-MAX_ACCEL_MPS2=15.0      # 加速度阈值
-VOTE_THRESHOLD=2         # 投票阈值（≥2票才删除）
+MAX_SPEED_MPS=700        # 速度阈值（FilterMaxSpeedSkipNaNWithVoting读取）
+MAX_ACCEL_MPS2=25.0      # 加速度阈值（FilterMaxSpeedSkipNaNWithVoting读取）
+VOTE_THRESHOLD=2         # 投票阈值（≥2票才删除，FilterMaxSpeedSkipNaNWithVoting读取）
+ALT_DERIV_FIRST_FTPS=151 # 高度一阶导阈值（ft/s）
+ALT_DERIV_SECOND_FTPS2=51 # 高度二阶导阈值（ft/s²）
 ```
 
 ### 切分参数
@@ -231,13 +233,18 @@ FilterCstLatLon()               # 删除经纬度重复点
 | FilterCstSpeed()              # 删除速度指标未更新点
 | FilterEdgeOutlier()           # 清理首尾离群点
 | FilterMaxSpeedSkipNaNWithVoting(  # ★核心：跨NaN速度检测+投票
-    max_speed_mps=550,
-    max_accel_mps2=15.0,
+    max_speed_mps=${MAX_SPEED_MPS},
+    max_accel_mps2=${MAX_ACCEL_MPS2},
     max_iterations=10,
-    vote_threshold=2
+    vote_threshold=${VOTE_THRESHOLD}
+  )
+| MyFilterDerivative(           # 高度三点投票（阈值来自config）
+    altitude=dict(first=151, second=51)
   )
 | FilterIsolated()              # 删除孤立点（>20s距离）
 ```
+
+> 提示：`MAX_SPEED_MPS` / `MAX_ACCEL_MPS2` / `VOTE_THRESHOLD` / `ALT_DERIV_*` 均来自 `config.sh`，修改后无需动代码即可生效。
 
 **投票机制**：
 - 速度异常：前后两点各得1票
@@ -251,6 +258,10 @@ FilterCstLatLon()               # 删除经纬度重复点
 - 衍生列：gsx, gsy, tasx, tasy, tas, wind, track_unwrapped
 
 理由：位置错误 → 基于位置的所有数据都不可信
+
+**高度突刺额外筛查**：
+- `MyFilterDerivative` 仅监控 `altitude`，一阶/二阶导阈值可通过 `ALT_DERIV_FIRST_FTPS` / `ALT_DERIV_SECOND_FTPS2` 配置；
+- 命中后将高度（及依赖天气字段）置 NaN，随后在切分阶段整行剔除，减少“高度突刺导致的段碎”。
 
 ### 两种运行模式
 

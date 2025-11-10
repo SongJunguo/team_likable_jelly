@@ -6,6 +6,7 @@
 """
 
 import argparse
+import os
 
 import pandas as pd
 import numpy as np
@@ -35,6 +36,24 @@ DERIV_PARAMS = {
     "longitude": dict(first=0.004, second=0.02),
     "altitude": dict(first=126, second=50),
 }
+
+
+def _get_env_float(name: str, default: float) -> float:
+    """读取环境变量中的浮点数，异常时回退默认值。"""
+    try:
+        value = os.environ.get(name, None)
+        return float(value) if value is not None else float(default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _get_env_int(name: str, default: int) -> int:
+    """读取环境变量中的整数，异常时回退默认值。"""
+    try:
+        value = os.environ.get(name, None)
+        return int(value) if value is not None else int(default)
+    except (TypeError, ValueError):
+        return int(default)
 
 
 def _make_derivative(**overrides):
@@ -89,17 +108,36 @@ def build_filter_chain(strategy: str) -> filters.FilterBase:
 
         流程：过滤（此策略） → 切分 → 插值
         """
+        # 从环境变量读取参数，提供默认值以确保代码健壮性，通过sh脚本设置环境变量覆盖默认值
+        max_speed_mps = _get_env_float("MAX_SPEED_MPS", 700.0)
+        max_accel_mps2 = _get_env_float("MAX_ACCEL_MPS2", 25.0)
+        vote_threshold = _get_env_int("VOTE_THRESHOLD", 2)
+        alt_first = _get_env_float("ALT_DERIV_FIRST_FTPS", 151.0)
+        alt_second = _get_env_float("ALT_DERIV_SECOND_FTPS2", 51.0)
+        print(
+            "[clean_segment_interp] "
+            f"max_speed_mps={max_speed_mps}, max_accel_mps2={max_accel_mps2}, "
+            f"vote_threshold={vote_threshold}, "
+            f"alt_first_ftps={alt_first}, alt_second_ftps2={alt_second}"
+        )
+        altitude_filter = MyFilterDerivative(
+            time_column="timestamp",
+            altitude=dict(first=alt_first, second=alt_second),
+        )
+        # 只监控高度一列，避免默认参数把经纬度也纳入票决
+        altitude_filter.columns = {"altitude": dict(first=alt_first, second=alt_second)}
         return (
             FilterCstLatLon()
             | FilterCstPosition()
             | FilterCstSpeed()
             | FilterEdgeOutlier()
             | FilterMaxSpeedSkipNaNWithVoting(
-                max_speed_mps=550,       # 可配置：550或600 m/s
-                max_accel_mps2=25.0,     # 加速度阈值
+                max_speed_mps=max_speed_mps,
+                max_accel_mps2=max_accel_mps2,
                 max_iterations=10,       # 循环直到收敛
-                vote_threshold=2         # 投票阈值
+                vote_threshold=vote_threshold
             )
+            | altitude_filter               # 高度三点投票
             | FilterIsolated()
         )
     elif strategy == "classic_dp_loop":
