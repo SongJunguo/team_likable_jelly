@@ -144,7 +144,7 @@ import numpy as np
 # 生成简单测试轨迹
 data = pd.DataFrame({
     'flight_id': [12345] * 100,
-    'timestamp': pd.date_range('2022-01-01 10:00:00', periods=100, freq='1s'),
+    'timestamp': pd.date_range('2022-01-01 10:00:00', periods=100, freq='s'),
     'latitude': np.linspace(39.9042, 40.0000, 100),
     'longitude': np.linspace(116.4074, 116.5000, 100),
     'altitude': np.linspace(1000, 5000, 100),

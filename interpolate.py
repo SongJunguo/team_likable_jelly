@@ -51,7 +51,7 @@ def resample_to_1hz(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     df_sorted = df.sort_values('timestamp').drop_duplicates(subset='timestamp').reset_index(drop=True)
-    rng = pd.date_range(start=df_sorted['timestamp'].iloc[0], end=df_sorted['timestamp'].iloc[-1], freq='1S')
+    rng = pd.date_range(start=df_sorted['timestamp'].iloc[0], end=df_sorted['timestamp'].iloc[-1], freq='s')
 
     resampled = (
         df_sorted

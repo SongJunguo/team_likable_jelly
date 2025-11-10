@@ -126,3 +126,25 @@ junguo_analysis_for_opensky2022/analysis_for_interpolation/check_nan_values.py�
   junguo_analysis_for_opensky2022/analysis_for_interpolation/All_trajectory_NaN_analysis.py
   junguo_analysis_for_opensky2022/analysis_for_interpolation/check_nan_values.py\
   你看看这两个nan检测功能更好吗？
+
+  # 第八次提问
+  > clean_segment_pipeline/config.sh\\
+  里面export MAX_ACCEL_MPS2=15.0      # 加速度阈值这个阈值是怎么来的？\
+  这个的单位是什么？
+我想知道这个数据为什么设置为15？
+还有我知道高度的原始单位是ft，分辨率是25，也就是高度上的速度和加速度计算都会受到影响的。
+他这个加速度速度和加速度是计算的3维空间的吗？
+现在阈值好像太严格了，轨迹被切的稀碎，每个小轨迹只有几百点。
+我是不是应该分开给出经纬和高度的速度和加速度阈值？而不是使用3维空间的？
+因为ads-b数据的经纬和高度不是同一个来源？
+
+junguo_analysis_for_opensky2022/analysis_for_interpolation/run_full_pipeline_with_interpolate.sh这个会好一些，轨迹不很稀碎。
+
+我在想能不能出一个报告，就是filter时候，告诉我filter掉了多少点？或者一些相关信息？或者先统计一下raw数据大部分的轨迹点之间的速度加速度是多少？我好判断经纬上的分辨率是多少？噪声有多少？
+
+opensky_2024_PRC_dataset/rawtrajectories
+opensky_2024_PRC_dataset/classic_filtered_trajectories_doublepass_loop_v8
+能不能统计这两个raw和过滤了的轨迹数量和数据点的数量差距多少？
+现在项目里面有没有能实现这个功能的代码？
+没有的话，你给出实现方案？考虑多进程？
+

@@ -87,6 +87,7 @@ conda activate opensky && python All_trajectory_NaN_analysis.py \
 ### 辅助工具
 4. **count_total_trajectories.py** - 统计轨迹总数
 5. **count_total_trajectories_multiprocess.py** - 多进程版本
+6. **compare_raw_vs_filtered_counts.py** - raw vs classic_filtered_doublepass 轨迹点 / 有效点（lat/lon/alt非NaN）/ 航班数量对比工具（多进程统计 + Markdown 汇总），详见 `README_compare_raw_vs_filtered.md`
 
 ## 完整数据处理流程
 

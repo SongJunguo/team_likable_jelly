@@ -14,7 +14,7 @@ def test_skipnan_filter():
     # 构造测试数据：模拟你的案例
     data = {
         'flight_id': [1] * 11,
-        'timestamp': pd.date_range('2022-02-21 08:40:00', periods=11, freq='1s', tz='UTC'),
+        'timestamp': pd.date_range('2022-02-21 08:40:00', periods=11, freq='s', tz='UTC'),
         'latitude': [
             41.287445,   # 点0 - 保留
             np.nan,      # 点1 - 被卡死过滤器删除
@@ -97,7 +97,7 @@ def test_partial_coords():
     # 构造包含部分坐标的测试数据
     data = {
         'flight_id': [1] * 10,
-        'timestamp': pd.date_range('2022-02-21 08:40:00', periods=10, freq='1s', tz='UTC'),
+        'timestamp': pd.date_range('2022-02-21 08:40:00', periods=10, freq='s', tz='UTC'),
         'latitude': [
             41.0,      # 点0 - 正常
             41.1,      # 点1 - 正常

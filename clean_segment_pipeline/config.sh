@@ -12,8 +12,8 @@ export REPORT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/reports/qua
 
 # ========== 过滤参数 ==========
 export FILTER_STRATEGY="clean_segment_interp"  # 新策略名
-export MAX_SPEED_MPS=550        # 速度阈值（可调：550或600）
-export MAX_ACCEL_MPS2=15.0      # 加速度阈值
+export MAX_SPEED_MPS=700        # 速度阈值（可调：550或600）
+export MAX_ACCEL_MPS2=25.0      # 加速度阈值
 export VOTE_THRESHOLD=2         # 投票阈值
 
 # ========== 切分参数 ==========

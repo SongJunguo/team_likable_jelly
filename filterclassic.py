@@ -877,6 +877,7 @@ class FilterShortBurst(filters.FilterBase):
 
 class FilterMaxSpeedSkipNaNWithVoting(filters.FilterBase):
     """跨NaN速度/加速度检测 + 三点投票法（整行删除版）。
+    注意：仅仅使用经纬计算速度和加速度，不涉及高度。
 
     核心特性：
     1. **跨NaN检测**：忽略中间NaN，连接最近的有效点计算速度/加速度

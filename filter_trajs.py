@@ -96,7 +96,7 @@ def build_filter_chain(strategy: str) -> filters.FilterBase:
             | FilterEdgeOutlier()
             | FilterMaxSpeedSkipNaNWithVoting(
                 max_speed_mps=550,       # 可配置：550或600 m/s
-                max_accel_mps2=15.0,     # 加速度阈值
+                max_accel_mps2=25.0,     # 加速度阈值
                 max_iterations=10,       # 循环直到收敛
                 vote_threshold=2         # 投票阈值
             )

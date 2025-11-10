@@ -128,7 +128,7 @@ class CompleteDatasetGenerator:
         time_grid = pd.date_range(
             start=df_trimmed['timestamp'].iloc[0],
             end=df_trimmed['timestamp'].iloc[-1],
-            freq='1S'
+            freq='s'
         )
         df_resampled = (
             df_trimmed
