@@ -41,9 +41,24 @@ clean_segment_pipeline/
 ├── process_single_day_fast_parallel.py # 新版（轨迹级并行）⭐
 │
 └── utils/
-    ├── check_nan_in_final.py   # NaN检测
     └── batch_utils.sh          # 批量处理工具
+
+# 复用分析工具（不在本目录）
+# - junguo_analysis_for_opensky2022/analysis_for_interpolation/check_nan_values.py  # NaN并行检测
+# - junguo_analysis_for_opensky2022/analysis_for_interpolation/run_detect_jumps_all.sh  # 跳变检测
 ```
+
+## ⚡ 并行策略速览
+
+| 脚本 | 并行粒度 | 实际行为 | 命名备注 |
+|------|---------|----------|-----------|
+| `run_fast_pipeline_parallel.sh` | 默认：文件级串行 + 轨迹级多进程；多日期时自动切到文件级多进程，文件内单线程 | 单文件测试时将 `--workers` 传入 `process_single_day_fast_parallel.py`，对每个 flight_id 启动多进程；为防止 24×24 内存爆炸，若待处理文件>1 会用 `xargs -P` 做文件级并行并把 `--workers` 固定为1 | 名称中的“parallel”指**轨迹级**并行，README 特别说明了单/多文件的动态策略 |
+| `run_fast_pipeline.sh` | 文件级并行 | `xargs -P $PROCS` 同时跑多个日期，每个 Python 进程内部串行完成“过滤→切分→插值” | “fast”指整合阶段、减少 I/O；并行业务在 README 中明确是文件级 |
+| `run_staged_pipeline.sh` | 自身无并行，顺序调度 01~04 | 只负责根据参数依次调用阶段脚本，并将 `--procs` 透传 | 名称体现“分阶段”，并发逻辑完全在子脚本中 |
+| `01_filter_clean.sh` | 文件级并行，轨迹级单进程 | 使用 `xargs -P $PROCS` 对不同日期并发，每个 `filter_trajs` 调用内部串行处理全部 flight | “filter” 已与阶段一致，说明其并行度可通过 `--procs` 控制 |
+| `02_split_by_time.sh` | 文件级并行，segment 内单线程 | `split_single_day.py` 逐 segment 切分，外层用 `xargs -P` 并发多个日期 | 名称明确“split by time”，文档中补充该阶段同样是文件级并行 |
+| `03_interpolate_segments.sh` | 文件级并行，segment 内单线程 | `interpolate_single_day.py` 顺序遍历 segment；外层 `xargs -P` 控制并发文件数 | “interpolate segments” 表达了作用对象，新增说明强调是文件级拆分 |
+| `04_quality_check.sh` | 脚本整体串行；内部调用 `run_detect_jumps_all.sh` 和 `check_nan_values.py` 均支持文件级并行 | 跳变检测和NaN检测的 `--procs` 参数控制并行度（默认24进程），基础统计为单进程Python | ⭐ 已升级NaN检测为并行模式，24个文件仅需3-5秒 |
 
 ## 🚀 使用方法
 
@@ -131,22 +146,80 @@ MIN_DURATION=120   # 最小segment时长（秒）
 SMOOTH=1e-2        # csaps平滑系数
 ```
 
-## 📊 质量检查
+### 质量检测开关（⭐新增）
+```bash
+# 检测开关（可随时开启/关闭）
+ENABLE_JUMP_DETECTION=1   # 1=启用跳变检测, 0=禁用
+ENABLE_NAN_CHECK=1        # 1=启用NaN检测, 0=禁用
+
+# NaN检测配置
+NAN_CHECK_COLUMNS="latitude longitude altitude"  # 重点检查经纬高
+NAN_CHECK_PROCS=24        # NaN检测并行进程数（⭐并行加速）
+```
+
+## 📊 质量检查（⭐已升级）
 
 流程结束后自动运行质量检查（也可手动运行）：
 
 ```bash
+# 完整检查（跳变 + NaN）
 bash 04_quality_check.sh
 
-# 输出报告：
-# 1. reports/quality_check_clean_v1/jump_detection/  (跳变检测)
-# 2. reports/quality_check_clean_v1/nan_check_report.txt  (NaN检测)
+# 仅NaN检查（跳过跳变检测，省时间）
+bash 04_quality_check.sh --skip-jump
+
+# 跳过NaN检测
+bash 04_quality_check.sh --skip-nan
+
+# 通过config.sh全局禁用
+# 编辑config.sh，修改：
+#   ENABLE_JUMP_DETECTION=0
+#   ENABLE_NAN_CHECK=0
 ```
 
-**检查项**：
-- ✅ 跳变检测：检测短时间内跨越超远距离的异常
-- ✅ NaN检测：确保最终轨迹0个NaN
-- ✅ 速度检测：确保无超速点（>550 m/s）
+### 输出报告
+
+```
+reports/quality_check_clean_v1/
+├── jump_detection/             # 跳变检测详情
+│   ├── jump_events_summary.csv
+│   └── jump_events_all.csv
+├── nan_check_report.txt        # NaN检测报告（⭐并行加速，3-5秒完成）
+└── basic_statistics.txt        # 基础统计
+```
+
+### NaN检测输出示例（⭐改进）
+
+**无NaN时（清晰的总体统计）**：
+```
+✅ 质量检查通过
+   总文件数: 24
+   总数据点: 66,807,887
+   总轨迹数: 261,030
+   经纬高缺失值: 0 (0.0000%)
+```
+
+**有NaN时（先总体统计，再问题列表）**：
+```
+❌ 质量检查失败
+   总文件数: 24
+   总数据点: 66,807,887
+
+   各列缺失率:
+     LATITUDE: 1,234 (0.0100%)
+     LONGITUDE: 0 (0.0000%)
+     ALTITUDE: 567 (0.0046%)
+
+   问题文件 (前10个):
+     📁 interpolated_2022-01-03.parquet: 801个NaN
+     ...
+```
+
+### 检查项
+
+- ✅ **跳变检测**：检测短时间内跨越超远距离的异常
+- ✅ **NaN检测**：并行检查经纬高缺失值（⭐24进程，速度快）
+- ✅ **基础统计**：文件数、数据点数、segment数
 
 ## 🔧 技术细节
 
@@ -218,14 +291,23 @@ VOTE_THRESHOLD=3     # 提高投票阈值
 ```
 
 ### 问题2：最终轨迹仍有NaN
-**原因**：插值阶段异常
+**原因**：插值阶段异常或切分参数过严
 
 **解决**：
 ```bash
-# 检查插值日志
+# 1. 查看NaN详细报告（⭐并行检测，快速定位问题）
+bash 04_quality_check.sh --skip-jump
+cat reports/quality_check_clean_v1/nan_check_report.txt
+
+# 2. 检查插值日志
 cat interpolated_clean_v1/.logs/2022-01-01.log
 
-# 手动运行单日插值
+# 3. 调整切分参数（如果segment太短导致插值失败）
+# 在config.sh中：
+MIN_POINTS=20      # 降低最小点数要求
+MIN_DURATION=60    # 降低最小时长要求
+
+# 4. 手动重新运行
 bash 03_interpolate_segments.sh --date 2022-01-01 --force
 ```
 
@@ -260,7 +342,9 @@ clean_segment_pipeline/run_fast_pipeline.sh
 1. **首次使用**：先用单日数据测试（--from/--to）
 2. **参数调优**：根据质量检查结果调整阈值
 3. **生产运行**：使用快速模式（run_fast_pipeline.sh）
-4. **定期检查**：运行quality_check.sh确保数据质量
+4. **快速验证**：使用 `--skip-jump` 快速检查NaN（3-5秒完成）⭐
+5. **开关控制**：通过config.sh中的开关变量控制检测项，避免重复运行⭐
+6. **定期检查**：运行quality_check.sh确保数据质量
 
 ## 📞 技术支持
 

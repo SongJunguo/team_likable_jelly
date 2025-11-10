@@ -133,42 +133,123 @@ fi
 echo "📅 待处理文件数: ${#TARGETS[@]}"
 echo ""
 
-# ========== 串行处理（每个文件内部并行） ==========
-echo "🚀 开始顺序处理（每个文件内${WORKERS}核并行）..."
+# ========== 智能并行策略（避免内存爆炸） ==========
+#
+# 重要说明：
+# 1. 过滤阶段（read_trajectories）是**串行**的，无法轨迹级并行
+# 2. 切分阶段（split_by_time_parallel）支持轨迹级并行
+# 3. 插值阶段（interpolate_parallel）支持轨迹级并行
+#
+# 内存考虑：
+# - 单个文件在内存：~2-3GB（过滤后）
+# - 如果24个文件 × 24个workers = 576个进程 → 内存爆炸！
+#
+# 安全策略：
+# - 单文件测试：使用全部workers（充分利用CPU）
+# - 多文件处理：只用文件级并行（避免内存爆炸）
+# - 总进程数上限：24（保守值，避免机械硬盘I/O饱和）
+
+NUM_FILES=${#TARGETS[@]}
+TOTAL_CORES=24  # 保守上限
+
+if [[ $NUM_FILES -eq 1 ]]; then
+    # 单文件模式：文件串行，轨迹并行
+    FILE_PROCS=1
+    ACTUAL_WORKERS=$WORKERS
+    echo "🔧 并行策略：单文件模式"
+    echo "   - 文件级：1个文件（串行）"
+    echo "   - 轨迹级：${ACTUAL_WORKERS}个worker（并行）"
+    echo "   - 总进程：${ACTUAL_WORKERS}个"
+    echo "   - 说明：过滤串行，切分和插值各用${ACTUAL_WORKERS}核"
+else
+    # 多文件模式：文件并行，轨迹串行
+    FILE_PROCS=$(( NUM_FILES < TOTAL_CORES ? NUM_FILES : TOTAL_CORES ))
+    ACTUAL_WORKERS=1
+    echo "🔧 并行策略：多文件模式"
+    echo "   - 文件级：${FILE_PROCS}个文件（并行）"
+    echo "   - 轨迹级：1个worker（串行）"
+    echo "   - 总进程：${FILE_PROCS}个"
+    echo "   - 说明：避免内存爆炸（过滤阶段无法轨迹并行）"
+fi
+
+echo ""
+echo "⚠️  重要：过滤阶段始终串行（read_trajectories不支持并行）"
+echo "         切分和插值阶段会使用${ACTUAL_WORKERS}个worker并行"
+echo ""
+
+# ========== 并行处理函数 ==========
+process_one_file() {
+    local d=$1
+    local actual_workers=$2
+    local in_f="$RAW/${d}.parquet"
+    local out_f="$OUT/interpolated_${d}.parquet"
+    local log="$OUT/.logs/${d}.log"
+
+    if /opt/miniconda3/envs/opensky/bin/python "$PY_FAST" \
+        -t_in "$in_f" \
+        -t_out "$out_f" \
+        -strategy "$FILTER_STRATEGY" \
+        -smooth "$SMOOTH_VAL" \
+        --workers "$actual_workers" > "$log" 2>&1
+    then
+        echo "  ✅ 完成: $d"
+        return 0
+    else
+        echo "  ❌ 失败: $d (详见 $log)"
+        return 1
+    fi
+}
+
+export -f process_one_file
+export RAW OUT PY_FAST FILTER_STRATEGY SMOOTH_VAL
+
+echo "🚀 开始处理..."
 echo ""
 
 SUCCESS=0
 FAILED=0
 
-for d in "${TARGETS[@]}"; do
-  in_f="$RAW/${d}.parquet"
-  out_f="$OUT/interpolated_${d}.parquet"
-  log="$OUT/.logs/${d}.log"
+if [[ $FILE_PROCS -eq 1 ]]; then
+    # 单文件模式：串行处理（但内部并行）
+    for d in "${TARGETS[@]}"; do
+        echo "▶️  处理 $d (内部${ACTUAL_WORKERS}核并行)..."
 
-  echo "▶️  处理 $d (内部${WORKERS}核并行)..."
+        if [[ "$DRYRUN" == "1" ]]; then
+            echo "DRYRUN: process_one_file $d $ACTUAL_WORKERS"
+            continue
+        fi
 
-  if [[ "$DRYRUN" == "1" ]]; then
-    echo "DRYRUN: python $PY_FAST -t_in $in_f -t_out $out_f -strategy $FILTER_STRATEGY -smooth $SMOOTH_VAL --workers $WORKERS"
-    continue
-  fi
+        if process_one_file "$d" "$ACTUAL_WORKERS"; then
+            SUCCESS=$((SUCCESS + 1))
+        else
+            FAILED=$((FAILED + 1))
+        fi
+    done
+else
+    # 多文件模式：文件级并行
+    echo "📦 使用xargs并行处理${FILE_PROCS}个文件..."
+    echo ""
 
-  if /opt/miniconda3/envs/opensky/bin/python "$PY_FAST" \
-    -t_in "$in_f" \
-    -t_out "$out_f" \
-    -strategy "$FILTER_STRATEGY" \
-    -smooth "$SMOOTH_VAL" \
-    --max-dt "$MAX_DT" \
-    --min-points "$MIN_POINTS" \
-    --min-duration "$MIN_DURATION" \
-    --workers "$WORKERS" \
-    >"$log" 2>&1; then
-    echo "  ✅ 完成: $d"
-    SUCCESS=$((SUCCESS + 1))
-  else
-    echo "  ❌ 失败: $d (详见 $log)"
-    FAILED=$((FAILED + 1))
-  fi
-done
+    if [[ "$DRYRUN" == "1" ]]; then
+        for d in "${TARGETS[@]}"; do
+            echo "DRYRUN: process_one_file $d $ACTUAL_WORKERS"
+        done
+    else
+        # 使用xargs并行，每个文件传递actual_workers参数
+        printf "%s\n" "${TARGETS[@]}" | \
+            xargs -I{} -P "$FILE_PROCS" bash -c "process_one_file {} $ACTUAL_WORKERS"
+
+        # 统计结果（简化版，实际成功数通过日志判断）
+        for d in "${TARGETS[@]}"; do
+            log="$OUT/.logs/${d}.log"
+            if [[ -f "$log" ]] && grep -q "✅ 完成" "$log" 2>/dev/null; then
+                SUCCESS=$((SUCCESS + 1))
+            else
+                FAILED=$((FAILED + 1))
+            fi
+        done
+    fi
+fi
 
 echo ""
 echo "==========================================="

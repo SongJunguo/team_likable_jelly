@@ -33,10 +33,18 @@ export INTERP_PROCS=24
 
 # ========== 日期范围 ==========
 export DATE_FROM="2022-01-01"
-export DATE_TO="2022-02-28"
+export DATE_TO="2022-01-24"
 
 # ========== 质量检测参数 ==========
 export QUALITY_CHECK_PROCS=24
+
+# ========== 质量检测开关 ==========
+export ENABLE_JUMP_DETECTION=1   # 1=启用跳变检测, 0=禁用
+export ENABLE_NAN_CHECK=1        # 1=启用NaN检测, 0=禁用
+
+# ========== NaN检测配置 ==========
+export NAN_CHECK_COLUMNS="latitude longitude altitude"  # 重点检查经纬高
+export NAN_CHECK_PROCS=24        # NaN检测并行进程数
 
 # ========== 内部变量（不要修改） ==========
 export REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

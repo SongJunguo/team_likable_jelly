@@ -98,3 +98,31 @@ junguo_analysis_for_opensky2022/analysis_for_interpolation/check_nan_values.py�
 
 现在的多进程是在文件层面控制，也就是一次性控制多少parquet文件进行。但是这样的非常的不好，因为一个文件就很大，单独跑完一次测试，就是一个文件一个进程，要等很久很久。
 能不能在更细致的层面控制呢？比如轨迹层面进行多进程？然后先一个parquet一个parquet进行，每个parquet内部根据轨迹进行多进程，不是现在多个parquet多进程。这会不会很复杂？
+
+# 第七次提问
+2025-11-09 02:51:48 INFO 22/24 interpolated_2022-01-04.parquet → 未发现跳变
+2025-11-09 02:51:48 INFO 23/24 interpolated_2022-01-03.parquet → 未发现跳变
+2025-11-09 02:51:48 INFO 24/24 interpolated_2022-01-02.parquet → 未发现跳变
+2025-11-09 02:51:48 INFO 跳变事件总数: 14，涉及航班 3 架次
+2025-11-09 02:51:48 INFO 汇总表已写入: /workspace/aircraft_trajectory/team_likable_jelly/reports/quality_check_clean_v1/jump_detection/jump_events_summary.csv
+2025-11-09 02:51:48 INFO 事件明细总表: /workspace/aircraft_trajectory/team_likable_jelly/reports/quality_check_clean_v1/jump_detection/jump_events_all.csv
+2025-11-09 02:51:48 INFO 日志输出: /workspace/aircraft_trajectory/team_likable_jelly/reports/quality_check_clean_v1/jump_detection/detect_perfect_jumps.log
+✅ 跳变检测完成。输出目录: /workspace/aircraft_trajectory/team_likable_jelly/reports/quality_check_clean_v1/jump_detection
+  ✅ 跳变检测完成：/workspace/aircraft_trajectory/team_likable_jelly/reports/quality_check_clean_v1/jump_detection
+
+[2/3] NaN检测...
+🔍 检查 24 个文件...
+^[[A^[[A^[[A^[[B^[[B^[[B^[[B^[[B^[[A❌ 质量检查失败：发现24个文件有NaN
+   详细报告: /workspace/aircraft_trajectory/team_likable_jelly/reports/quality_check_clean_v1/nan_check_report.txt
+  ❌ NaN检测失败（发现NaN！）
+  详见: /workspace/aircraft_trajectory/team_likable_jelly/reports/quality_check_clean_v1/nan_check_report.txt
+(opensky) root@ea820f0b5965:/workspace/aircraft_trajectory/team_likable_jelly# 
+  clean_segment_pipeline/run_fast_pipeline_parallel.sh
+  clean_segment_pipeline/run_fast_pipeline.sh
+  clean_segment_pipeline/run_staged_pipeline.sh\
+  我希望可以自动执行检测，通过一个变量开关控制是否执行检测\\
+  nan检测你可以应该汇报经纬高有没有缺失，，没有的话，给出一个总体的指标而不是每个文件单独给，看起费劲、\
+  junguo_analysis_for_opensky2022/analysis_for_interpolation
+  junguo_analysis_for_opensky2022/analysis_for_interpolation/All_trajectory_NaN_analysis.py
+  junguo_analysis_for_opensky2022/analysis_for_interpolation/check_nan_values.py\
+  你看看这两个nan检测功能更好吗？

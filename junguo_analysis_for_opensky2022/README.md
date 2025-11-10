@@ -1034,6 +1034,27 @@ python verify_metadata_sources.py
 - **数据范围正常**: 99.9%以上数据在合理范围内
 - **轨迹完整性**: 平均每航班6,368轨迹点，中位数4,735点
 
+📊 **全年原始数据统计（2022-01-01 ~ 2022-12-31）**:
+- **总轨迹点**: 6,390,198,052
+- **唯一航班数**: 979,680
+- **来源**: `/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories/`（365个parquet）
+- **验证命令**:
+  ```bash
+  conda activate opensky
+  cd /workspace/aircraft_trajectory/team_likable_jelly
+  python - <<'PY'
+  import glob, polars as pl
+  files = sorted(glob.glob('opensky_2024_PRC_dataset/rawtrajectories/*.parquet'))
+  lf = pl.scan_parquet(files)
+  res = lf.select([
+      pl.len().alias('total_points'),
+      pl.col('flight_id').n_unique().alias('unique_flights')
+  ]).collect(streaming=True)
+  print(res)
+  PY
+  ```
+- **交叉验证**: `junguo_analysis_for_opensky2022/region_summary_summary.json` 中 `total_flights`、`points_total` 字段与该统计一致。
+
 ⚠️ **插值轨迹数据质量问题**:
 - **严重缺失**: latitude/longitude(13.8%), groundspeed(22.0%), TAS相关(28.2%)
 - **质量下降**: 相比原始数据，缺失值增加40-100倍
@@ -1098,6 +1119,9 @@ python junguo_analysis_for_opensky2022/analyze_regions.py \
 输出：
 - `region_summary_per_flight.csv`：每个 flight_id 的地区分类和计数
 - `region_summary_summary.csv` / `.json`：总览统计（按航班/按点）与主区域结论
+- **最新结果（`region_summary_summary.json`）**:
+  - 航班侧：EU 929,387 (94.87%)、US 28,440 (2.90%)、OTHER 21,853 (2.23%)
+  - 轨迹点侧：EU 5,566,186,164 (87.11%)、US 421,675,530 (6.60%)、OTHER 402,336,358 (6.30%)
 
 ### 一键运行脚本
 
@@ -1150,7 +1174,7 @@ bash junguo_analysis_for_opensky2022/summarize_region_analysis.sh -m 0.6 -o jung
 ### 📊 数据质量评估
 
 **原始轨迹数据** ✅ **强烈推荐**:
-- 📈 **数据规模**: 55,235 唯一航班，351,717,077 轨迹点
+- 📈 **数据规模**: 30天样本 55,235 航班 / 351,717,077 轨迹点；全年 raw 979,680 航班 / 6,390,198,052 轨迹点
 - 🎯 **数据质量**: 缺失值极低 (0.296-0.442%)
 - 📏 **轨迹完整性**: 平均6,368点/航班，中位数4,735点
 - 🔍 **异常值控制**: 99.9%以上数据在合理范围内
@@ -1165,7 +1189,7 @@ bash junguo_analysis_for_opensky2022/summarize_region_analysis.sh -m 0.6 -o jung
 ✅ **TOW数据完整性**: 挑战集中所有369,013个航班都有完整的TOW（起飞重量）数据  
 ✅ **轨迹数据充足**: 每日轨迹文件包含1,500-2,500航班，充足的训练样本  
 ✅ **多模态特征**: 轨迹+天气+元数据三重特征组合，适合复杂预测模型  
-✅ **大规模数据**: 基于30天分析，全年预计4.2亿轨迹点，670万航班
+✅ **大规模数据**: 实测全年 raw 为 6.39B 轨迹点、979,680 航班，远超模型训练需求
 
 ### 可行的预测任务
 

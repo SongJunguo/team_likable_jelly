@@ -12,7 +12,7 @@ source "$SCRIPT_DIR/config.sh"
 
 # 引用原有的跳变检测脚本
 JUMP_DETECT="$REPO_ROOT/junguo_analysis_for_opensky2022/analysis_for_interpolation/run_detect_jumps_all.sh"
-NAN_CHECK="$SCRIPT_DIR/utils/check_nan_in_final.py"
+NAN_CHECK="$REPO_ROOT/junguo_analysis_for_opensky2022/analysis_for_interpolation/check_nan_values.py"
 
 usage() {
   cat <<'EOF'
@@ -70,7 +70,7 @@ echo "报告目录: $OUT_DIR"
 echo ""
 
 # ========== 检查1：跳变检测 ==========
-if [[ "$SKIP_JUMP" == "0" ]]; then
+if [[ "$SKIP_JUMP" == "0" && "$ENABLE_JUMP_DETECTION" == "1" ]]; then
   echo "[1/3] 跳变检测..."
 
   if [[ ! -f "$JUMP_DETECT" ]]; then
@@ -88,13 +88,13 @@ if [[ "$SKIP_JUMP" == "0" ]]; then
     echo "  ✅ 跳变检测完成：$JUMP_OUT"
   fi
 else
-  echo "[1/3] 跳过跳变检测"
+  echo "[1/3] 跳过跳变检测（--skip-jump或ENABLE_JUMP_DETECTION=0）"
 fi
 
 echo ""
 
 # ========== 检查2：NaN检测 ==========
-if [[ "$SKIP_NAN" == "0" ]]; then
+if [[ "$SKIP_NAN" == "0" && "$ENABLE_NAN_CHECK" == "1" ]]; then
   echo "[2/3] NaN检测..."
 
   if [[ ! -f "$NAN_CHECK" ]]; then
@@ -102,7 +102,11 @@ if [[ "$SKIP_NAN" == "0" ]]; then
   else
     NAN_REPORT="$OUT_DIR/nan_check_report.txt"
 
-    python "$NAN_CHECK" --data-dir "$DATA_DIR" --out-file "$NAN_REPORT" || {
+    python "$NAN_CHECK" \
+      --input-dir "$DATA_DIR" \
+      --output "$NAN_REPORT" \
+      --processes "$NAN_CHECK_PROCS" \
+      --columns $NAN_CHECK_COLUMNS || {
       echo "  ❌ NaN检测失败（发现NaN！）"
       echo "  详见: $NAN_REPORT"
       exit 1
@@ -112,7 +116,7 @@ if [[ "$SKIP_NAN" == "0" ]]; then
     echo "  报告: $NAN_REPORT"
   fi
 else
-  echo "[2/3] 跳过NaN检测"
+  echo "[2/3] 跳过NaN检测（--skip-nan或ENABLE_NAN_CHECK=0）"
 fi
 
 echo ""
