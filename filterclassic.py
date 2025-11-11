@@ -1084,30 +1084,27 @@ class FilterMaxSpeedSkipNaNWithVoting(filters.FilterBase):
                 accel[1:-1] = 2.0 * diff_speed / dt_avg
 
             # === 步骤3c：投票 ===
-            votes = np.zeros(n, dtype=int)
+            speed_votes = np.zeros(n, dtype=int)
+            accel_votes = np.zeros(n, dtype=int)
 
-            # 1) 速度投票：i和i+1各得一票
+            # 1) 速度投票：i和i+1各得一票（只对速度票计数）
             speed_spike = speed >= self.max_speed_mps
             if np.any(speed_spike):
-                # 对索引i投票（前点）
-                votes[:-1] += speed_spike.astype(int)
-                # 对索引i+1投票（后点）
-                votes[1:] += speed_spike.astype(int)
+                votes_inc = speed_spike.astype(int)
+                speed_votes[:-1] += votes_inc
+                speed_votes[1:] += votes_inc
 
-            # 2) 加速度投票：i-1、i、i+1各得一票
+            # 2) 加速度投票：i-1、i、i+1各得一票（只对加速度票计数）
             accel_spike = np.abs(accel) >= self.max_accel_mps2
-            # 只考虑有效计算的加速度（中间点）
             accel_spike = np.nan_to_num(accel_spike, nan=False)
             if np.any(accel_spike):
-                # 对i-1投票
-                votes[:-2] += accel_spike[1:-1].astype(int)
-                # 对i投票
-                votes[1:-1] += accel_spike[1:-1].astype(int)
-                # 对i+1投票
-                votes[2:] += accel_spike[1:-1].astype(int)
+                votes_inc = accel_spike[1:-1].astype(int)
+                accel_votes[:-2] += votes_inc
+                accel_votes[1:-1] += votes_inc
+                accel_votes[2:] += votes_inc
 
-            # === 步骤3d：整行删除（票数≥阈值）===
-            bad_mask = votes >= self.vote_threshold
+            # === 步骤3d：整行删除（任意一种票数≥阈值）===
+            bad_mask = (speed_votes >= self.vote_threshold) | (accel_votes >= self.vote_threshold)
             if np.any(bad_mask):
                 bad_indices.update(idx_valid[bad_mask])
 

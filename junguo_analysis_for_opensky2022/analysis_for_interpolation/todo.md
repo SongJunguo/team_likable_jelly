@@ -9,7 +9,7 @@
 | FilterCstLatLon()
 | FilterCstPosition()
 | FilterCstSpeed()
-| FilterEdgeOutlier()
+| FilterEdgeOutlier()   
  # 第2道防线：跨越NaN检测间接超速（过滤器删除中间点后形成的超速）
 | FilterMaxSpeedSkipNaN(max_speed_mps=550, max_iterations=10)
 | FilterIsolated()
