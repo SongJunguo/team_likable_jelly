@@ -26,8 +26,10 @@ sys.path.insert(0, os.path.dirname(__file__) + '/..')
 from interpolate import interpolate
 import readers as readers_module
 
+DEFAULT_MAX_HOLE_SIZE = 20
 
-def interpolate_segment_wrapper(df: pd.DataFrame, smooth: float) -> pd.DataFrame:
+
+def interpolate_segment_wrapper(df: pd.DataFrame, smooth: float, max_hole_size: int) -> pd.DataFrame:
     """对单个segment插值（直接调用interpolate.py的interpolate函数）
 
     注意：segment内部已保证时间连续（≤20s）
@@ -36,7 +38,7 @@ def interpolate_segment_wrapper(df: pd.DataFrame, smooth: float) -> pd.DataFrame
         return df
 
     # 直接调用interpolate.py的interpolate函数
-    result = interpolate(df, smooth)
+    result = interpolate(df, smooth, max_hole_size=max_hole_size)
 
     # 转换track_unwrapped为track（原interpolate()输出track_unwrapped）
     if "track_unwrapped" in result.columns:
@@ -46,7 +48,7 @@ def interpolate_segment_wrapper(df: pd.DataFrame, smooth: float) -> pd.DataFrame
     return result
 
 
-def interpolate_all(df, smooth=1e-2):
+def interpolate_all(df, smooth=1e-2, max_hole_size=DEFAULT_MAX_HOLE_SIZE):
     """在内存中插值所有segments"""
     if df.empty:
         return df
@@ -65,7 +67,7 @@ def interpolate_all(df, smooth=1e-2):
 
     # 按flight_id分组插值（每个segment独立，调用interpolate.py）
     result = df.groupby("flight_id").apply(
-        lambda x: interpolate_segment_wrapper(x, smooth),
+        lambda x: interpolate_segment_wrapper(x, smooth, max_hole_size),
         include_groups=False
     ).reset_index()
 
@@ -87,6 +89,7 @@ def main():
     parser.add_argument('-t_in', required=True, help='输入切分后轨迹文件')
     parser.add_argument('-t_out', required=True, help='输出插值轨迹文件')
     parser.add_argument('-smooth', type=float, default=1e-2, help='插值平滑系数')
+    parser.add_argument('--max-hole-size', type=int, default=None, help='最大插值间隔（秒），默认与MAX_DT一致')
     args = parser.parse_args()
 
     print(f"▶️  插值: {os.path.basename(args.t_in)}")
@@ -96,8 +99,13 @@ def main():
     num_segs = df['flight_id'].nunique()
     print(f"    输入: {num_segs} 个segments, {len(df):,} 行")
 
+    max_hole_size = args.max_hole_size if args.max_hole_size is not None else DEFAULT_MAX_HOLE_SIZE
+    if max_hole_size <= 0:
+        raise ValueError("max-hole-size 必须为正数")
+    print(f"    参数: smooth={args.smooth}, max_hole_size={max_hole_size}s")
+
     # 插值
-    df_interp = interpolate_all(df, args.smooth)
+    df_interp = interpolate_all(df, args.smooth, max_hole_size)
     print(f"    输出: {len(df_interp):,} 行")
 
     # 检查NaN（确保0个）

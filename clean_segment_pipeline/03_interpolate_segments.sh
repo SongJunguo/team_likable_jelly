@@ -30,6 +30,7 @@ usage() {
   --to DATE           截止日期（默认: $DATE_TO）
   --procs N           并发数（默认: $INTERP_PROCS）
   --smooth VAL        平滑系数（默认: $SMOOTH）
+  --max-hole-size N   最大插值间隔（默认: $MAX_HOLE_SIZE）
   --force             覆盖已存在文件
   --dry-run           仅打印命令
   --limit N           仅处理前N个文件（测试用）
@@ -50,6 +51,7 @@ PROCS="$INTERP_PROCS"
 FROM="$DATE_FROM"
 TO="$DATE_TO"
 SMOOTH_VAL="$SMOOTH"
+MAX_HOLE_VAL="$MAX_HOLE_SIZE"
 FORCE=0
 DRYRUN=0
 LIMIT=0
@@ -62,6 +64,7 @@ while [[ $# -gt 0 ]]; do
     --to) TO="$2"; shift 2;;
     --procs) PROCS="$2"; shift 2;;
     --smooth) SMOOTH_VAL="$2"; shift 2;;
+    --max-hole-size) MAX_HOLE_VAL="$2"; shift 2;;
     --force) FORCE=1; shift;;
     --dry-run) DRYRUN=1; shift;;
     --limit) LIMIT="$2"; shift 2;;
@@ -82,6 +85,7 @@ echo "输出目录: $OUT"
 echo "日期范围: $FROM ~ $TO"
 echo "并发数: $PROCS"
 echo "平滑系数: $SMOOTH_VAL"
+echo "最大插值间隔: $MAX_HOLE_VAL"
 echo ""
 
 # 获取待处理文件列表
@@ -134,7 +138,7 @@ interp_one() {
   echo "▶️  插值 $d" | tee "$log"
 
   if [[ "$DRYRUN" == "1" ]]; then
-    echo "DRYRUN: python $PY_INTERP -t_in $in_f -t_out $out_f -smooth $SMOOTH_VAL" | tee -a "$log"
+    echo "DRYRUN: python $PY_INTERP -t_in $in_f -t_out $out_f -smooth $SMOOTH_VAL --max-hole-size $MAX_HOLE_VAL" | tee -a "$log"
     return 0
   fi
 
@@ -142,13 +146,14 @@ interp_one() {
     -t_in "$in_f" \
     -t_out "$out_f" \
     -smooth "$SMOOTH_VAL" \
+    --max-hole-size "$MAX_HOLE_VAL" \
     >>"$log" 2>&1 || { echo "❌ 失败: $d (详见 $log)"; return 1; }
 
   echo "✅ 完成: $d" | tee -a "$log"
 }
 
 export -f interp_one
-export PY_INTERP IN_DIR OUT SMOOTH_VAL DRYRUN
+export PY_INTERP IN_DIR OUT SMOOTH_VAL MAX_HOLE_VAL DRYRUN
 
 # ========== 并行执行 ==========
 echo "🚀 开始并行处理（$PROCS 进程）..."

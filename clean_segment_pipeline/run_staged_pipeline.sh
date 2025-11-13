@@ -32,6 +32,7 @@ usage() {
   --to DATE           截止日期（默认: $DATE_TO）
   --procs N           并发数（默认: $FILTER_PROCS）
   --smooth VAL        插值平滑系数（默认: $SMOOTH）
+  --max-hole-size N   最大插值间隔（默认: $MAX_HOLE_SIZE）
   --skip-filter       跳过过滤阶段
   --skip-split        跳过切分阶段
   --skip-interp       跳过插值阶段
@@ -58,6 +59,7 @@ FROM="$DATE_FROM"
 TO="$DATE_TO"
 PROCS="$FILTER_PROCS"
 SMOOTH_VAL="$SMOOTH"
+MAX_HOLE_VAL="$MAX_HOLE_SIZE"
 SKIP_FILTER=0
 SKIP_SPLIT=0
 SKIP_INTERP=0
@@ -79,6 +81,7 @@ while [[ $# -gt 0 ]]; do
     --to) TO="$2"; shift 2;;
     --procs) PROCS="$2"; shift 2;;
     --smooth) SMOOTH_VAL="$2"; shift 2;;
+    --max-hole-size) MAX_HOLE_VAL="$2"; shift 2;;
     --skip-filter) SKIP_FILTER=1; shift;;
     --skip-split) SKIP_SPLIT=1; shift;;
     --skip-interp) SKIP_INTERP=1; shift;;
@@ -98,6 +101,7 @@ echo "原始数据: $RAW"
 echo "日期范围: $FROM ~ $TO"
 echo "并发数: $PROCS"
 echo "平滑系数: $SMOOTH_VAL"
+echo "最大插值间隔: $MAX_HOLE_VAL"
 echo ""
 echo "中间结果："
 echo "  1. filtered_clean_v1/       (过滤后)"
@@ -169,7 +173,7 @@ if [[ "$SKIP_INTERP" == "0" ]]; then
   echo "=========================================="
   echo ""
 
-  CMD=(bash "$SCRIPT_DIR/03_interpolate_segments.sh" --procs "$PROCS" --smooth "$SMOOTH_VAL")
+  CMD=(bash "$SCRIPT_DIR/03_interpolate_segments.sh" --procs "$PROCS" --smooth "$SMOOTH_VAL" --max-hole-size "$MAX_HOLE_VAL")
   [[ -n "$FROM" ]] && CMD+=(--from "$FROM")
   [[ -n "$TO" ]] && CMD+=(--to "$TO")
   [[ "$FORCE" == "1" ]] && CMD+=(--force)

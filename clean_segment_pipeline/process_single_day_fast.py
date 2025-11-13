@@ -117,7 +117,7 @@ def split_by_time_in_memory(df, required_cols, max_dt=20, min_points=30, min_dur
 
 # ========== 阶段3：插值（直接调用interpolate.py） ==========
 
-def interpolate_in_memory(df, smooth=1e-2):
+def interpolate_in_memory(df, smooth=1e-2, max_hole_size=20):
     """在内存中插值所有segments（直接调用interpolate.py）"""
     if df.empty:
         return df
@@ -136,7 +136,7 @@ def interpolate_in_memory(df, smooth=1e-2):
 
     # 按flight_id分组插值（直接调用interpolate.py的interpolate函数）
     result = df.groupby("flight_id").apply(
-        lambda x: interpolate(x, smooth),
+        lambda x: interpolate(x, smooth, max_hole_size),
         include_groups=False
     ).reset_index()
 
@@ -154,7 +154,7 @@ def interpolate_in_memory(df, smooth=1e-2):
 # ========== 主流程 ==========
 
 def process_one_day_fast(input_file, output_file, strategy='clean_segment_interp', smooth=1e-2,
-                         max_dt=20, min_points=30, min_duration=120):
+                         max_dt=20, min_points=30, min_duration=120, max_hole_size=20):
     """一口气处理单日数据
 
     Args:
@@ -194,7 +194,7 @@ def process_one_day_fast(input_file, output_file, strategy='clean_segment_interp
 
     # 阶段3：插值
     print("  [3/3] 插值...")
-    df_final = interpolate_in_memory(df_segmented, smooth)
+    df_final = interpolate_in_memory(df_segmented, smooth, max_hole_size)
     print(f"    插值后: {len(df_final):,} 行")
 
     # 检查NaN（确保0个）
@@ -221,6 +221,7 @@ def main():
     parser.add_argument('--max-dt', type=int, default=20, help='最大时间间隔（秒）')
     parser.add_argument('--min-points', type=int, default=30, help='最小点数')
     parser.add_argument('--min-duration', type=int, default=120, help='最小时长（秒）')
+    parser.add_argument('--max-hole-size', type=int, default=20, help='最大插值间隔（秒）')
     args = parser.parse_args()
 
     process_one_day_fast(
@@ -230,7 +231,8 @@ def main():
         args.smooth,
         args.max_dt,
         args.min_points,
-        args.min_duration
+        args.min_duration,
+        args.max_hole_size
     )
 
 

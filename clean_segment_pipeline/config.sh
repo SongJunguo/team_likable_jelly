@@ -5,10 +5,10 @@
 export RAW_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories"
 
 # 新流程输出目录（清晰命名）
-export FILTERED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/filtered_clean_v5"
-export SEGMENTED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_clean_v5"
-export INTERPOLATED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/interpolated_clean_v5"
-export REPORT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/reports/quality_check_clean_v5"
+export FILTERED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/filtered_clean_v6"
+export SEGMENTED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_clean_v6"
+export INTERPOLATED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/interpolated_clean_v6"
+export REPORT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/reports/quality_check_clean_v6"
 
 # ========== 过滤参数 ==========
 export FILTER_STRATEGY="clean_segment_interp"  # 新策略名
@@ -23,10 +23,11 @@ export REQ_COLS="latitude longitude altitude"
 export MAX_DT=300                # 最大时间间隔（秒）
 export MIN_POINTS=30            # 最小点数
 export MIN_DURATION=120         # 最小时长（秒）
+export MAX_HOLE_SIZE="$MAX_DT"   # 最大插值间隔（默认跟MAX_DT一致，可单独调整）
 
 # ========== 插值参数 ==========
 export SMOOTH=1e-2              # csaps平滑系数
-# 注意：segment内部已保证时间连续（≤20s），不需要MAX_HOLE_SIZE限制
+# 注意：segment内部通过切分控制Δt≤MAX_DT，插值阶段再按MAX_HOLE_SIZE限制缺口
 
 # ========== 并发配置 ==========
 export FILTER_PROCS=24

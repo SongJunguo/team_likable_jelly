@@ -138,14 +138,16 @@ ALT_DERIV_SECOND_FTPS2=51 # 高度二阶导阈值（ft/s²）
 
 ### 切分参数
 ```bash
-MAX_DT=20          # 最大时间间隔（秒）
-MIN_POINTS=30      # 最小segment点数
-MIN_DURATION=120   # 最小segment时长（秒）
+MAX_DT=20                  # 最大时间间隔（秒）
+MIN_POINTS=30              # 最小segment点数
+MIN_DURATION=120           # 最小segment时长（秒）
+MAX_HOLE_SIZE="$MAX_DT"    # 最大插值间隔，默认与MAX_DT保持一致，可单独调整
 ```
 
 ### 插值参数
 ```bash
 SMOOTH=1e-2        # csaps平滑系数
+# MAX_HOLE_SIZE 同上，由03/fast脚本透传给 interpolate.py 限制最大补洞长度
 ```
 
 ### 质量检测开关（⭐新增）

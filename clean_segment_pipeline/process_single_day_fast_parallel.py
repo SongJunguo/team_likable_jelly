@@ -152,19 +152,19 @@ def interpolate_one_segment(args):
     """对单个segment插值（直接调用interpolate.py的interpolate函数）
 
     Args:
-        args: (flight_id, segment_df, smooth)
+        args: (flight_id, segment_df, smooth, max_hole_size)
 
     Returns:
         插值后的segment
     """
-    flight_id, df, smooth = args
+    flight_id, df, smooth, max_hole_size = args
 
     if df.empty:
         return df
 
     try:
         # 直接调用interpolate.py的interpolate函数
-        result = interpolate(df, smooth)
+        result = interpolate(df, smooth, max_hole_size)
 
         # 转换track_unwrapped为track（原interpolate()输出track_unwrapped）
         if "track_unwrapped" in result.columns:
@@ -178,7 +178,7 @@ def interpolate_one_segment(args):
         return pd.DataFrame()
 
 
-def interpolate_parallel(df, smooth=1e-2, workers=24):
+def interpolate_parallel(df, smooth=1e-2, workers=24, max_hole_size=20):
     """并行插值所有segments（segment级并行）
 
     Args:
@@ -207,7 +207,7 @@ def interpolate_parallel(df, smooth=1e-2, workers=24):
     # 按flight_id分组，准备并行任务
     tasks = []
     for fid, group in df.groupby("flight_id", sort=False):
-        tasks.append((fid, group, smooth))
+        tasks.append((fid, group, smooth, max_hole_size))
 
     print(f"    并行插值 {len(tasks)} 个segments（{workers} workers）...")
 
@@ -237,7 +237,8 @@ def interpolate_parallel(df, smooth=1e-2, workers=24):
 # ========== 主流程 ==========
 
 def process_one_day_fast_parallel(input_file, output_file, strategy='clean_segment_interp', smooth=1e-2,
-                                   max_dt=20, min_points=30, min_duration=120, workers=24):
+                                   max_dt=20, min_points=30, min_duration=120, workers=24,
+                                   max_hole_size=20):
     """一口气处理单日数据（轨迹级并行）
 
     Args:
@@ -286,7 +287,7 @@ def process_one_day_fast_parallel(input_file, output_file, strategy='clean_segme
 
     # 阶段3：插值（并行）
     print(f"  [3/3] 插值... (segment级并行)")
-    df_final = interpolate_parallel(df_segmented, smooth, workers)
+    df_final = interpolate_parallel(df_segmented, smooth, workers, max_hole_size)
     print(f"    插值后: {len(df_final):,} 行")
 
     # 检查NaN（确保0个）
@@ -314,6 +315,7 @@ def main():
     parser.add_argument('--min-points', type=int, default=30, help='最小点数')
     parser.add_argument('--min-duration', type=int, default=120, help='最小时长（秒）')
     parser.add_argument('--workers', type=int, default=24, help='并行worker数')
+    parser.add_argument('--max-hole-size', type=int, default=20, help='最大插值间隔（秒）')
     args = parser.parse_args()
 
     process_one_day_fast_parallel(
@@ -324,7 +326,8 @@ def main():
         args.max_dt,
         args.min_points,
         args.min_duration,
-        args.workers
+        args.workers,
+        args.max_hole_size
     )
 
 

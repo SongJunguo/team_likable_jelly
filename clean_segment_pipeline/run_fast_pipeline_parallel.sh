@@ -89,6 +89,7 @@ echo "策略: $FILTER_STRATEGY"
 echo "日期范围: $FROM ~ $TO"
 echo "并行worker数: $WORKERS（每个文件内并行）"
 echo "平滑系数: $SMOOTH_VAL"
+echo "最大插值间隔: $MAX_HOLE_SIZE"
 echo ""
 echo "并行策略："
 echo "  - 文件级：串行（一个一个处理）"
@@ -190,6 +191,10 @@ process_one_file() {
         -t_out "$out_f" \
         -strategy "$FILTER_STRATEGY" \
         -smooth "$SMOOTH_VAL" \
+        --max-dt "$MAX_DT" \
+        --min-points "$MIN_POINTS" \
+        --min-duration "$MIN_DURATION" \
+        --max-hole-size "$MAX_HOLE_SIZE" \
         --workers "$actual_workers" > "$log" 2>&1
     then
         echo "  ✅ 完成: $d"
@@ -201,7 +206,7 @@ process_one_file() {
 }
 
 export -f process_one_file
-export RAW OUT PY_FAST FILTER_STRATEGY SMOOTH_VAL
+export RAW OUT PY_FAST FILTER_STRATEGY SMOOTH_VAL MAX_DT MIN_POINTS MIN_DURATION MAX_HOLE_SIZE
 
 echo "🚀 开始处理..."
 echo ""

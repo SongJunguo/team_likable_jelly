@@ -11,7 +11,7 @@ import scipy
 from scipy.ndimage import gaussian_filter1d
 
 
-MAX_HOLE_SIZE = 20 # seconds
+DEFAULT_MAX_HOLE_SIZE = 20 # seconds
 
 
 DICO_HOLE_SIZE = {}
@@ -75,7 +75,7 @@ def resample_to_1hz(df: pd.DataFrame) -> pd.DataFrame:
     return resampled
 
 
-def interpolate(df,smooth):
+def interpolate(df,smooth,max_hole_size=DEFAULT_MAX_HOLE_SIZE):
     '''
     Smooth the different measurements using splines
     does not interpolate between measurements separated by 20 seconds
@@ -113,10 +113,10 @@ def interpolate(df,smooth):
                 dico["d"+v]=dst * 60
     res = df.assign(**dico)
     for v in lnanvar:
-        res[v] = res[[v]].mask(ddt[v] > DICO_HOLE_SIZE.get(v,MAX_HOLE_SIZE))
+        res[v] = res[[v]].mask(ddt[v] > DICO_HOLE_SIZE.get(v,max_hole_size))
         res[v] = res[[v]].mask(np.isnan(ddt[v]))
         if ("d"+v) in dico:
-            res["d"+v] = res[["d"+v]].mask(ddt[v] > DICO_HOLE_SIZE.get(v,MAX_HOLE_SIZE))
+            res["d"+v] = res[["d"+v]].mask(ddt[v] > DICO_HOLE_SIZE.get(v,max_hole_size))
             res["d"+v] = res[["d"+v]].mask(np.isnan(ddt[v]))
     return res.drop(columns="t")
 
@@ -129,13 +129,14 @@ def main():
     parser.add_argument("-t_in",required=True)
     parser.add_argument("-t_out",required=True)
     parser.add_argument("-smooth",type=float,required=True)
+    parser.add_argument("--max-hole-size", type=int, default=DEFAULT_MAX_HOLE_SIZE)
     args = parser.parse_args()
     df = pd.read_parquet(args.t_in)
     # print(list(df))
     for v in ["flight_id", "icao24"]:
         df[v] = df[v].astype(np.int64)
     df = readers.convert_from_SI(readers.add_features_trajectories(readers.convert_to_SI(df)))
-    df = df.groupby("flight_id").apply(lambda x:interpolate(x,args.smooth),include_groups=False).reset_index()
+    df = df.groupby("flight_id").apply(lambda x:interpolate(x,args.smooth,args.max_hole_size),include_groups=False).reset_index()
     df.drop(columns="level_1").to_parquet(args.t_out,index=False)
 
 

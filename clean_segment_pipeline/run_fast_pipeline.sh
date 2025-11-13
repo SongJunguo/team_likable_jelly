@@ -107,6 +107,7 @@ echo "策略: $FILTER_STRATEGY"
 echo "日期范围: $FROM ~ $TO"
 echo "并发数: $PROCS"
 echo "平滑系数: $SMOOTH_VAL"
+echo "最大插值间隔: $MAX_HOLE_SIZE"
 echo ""
 
 # 获取待处理文件列表
@@ -157,7 +158,7 @@ run_one_fast() {
   echo "▶️  快速处理 $d" | tee "$log"
 
   if [[ "$DRYRUN" == "1" ]]; then
-    echo "DRYRUN: python $PY_FAST -t_in $in_f -t_out $out_f -strategy $FILTER_STRATEGY -smooth $SMOOTH_VAL" | tee -a "$log"
+    echo "DRYRUN: python $PY_FAST -t_in $in_f -t_out $out_f -strategy $FILTER_STRATEGY -smooth $SMOOTH_VAL --max-dt $MAX_DT --min-points $MIN_POINTS --min-duration $MIN_DURATION --max-hole-size $MAX_HOLE_SIZE" | tee -a "$log"
     return 0
   fi
 
@@ -169,13 +170,14 @@ run_one_fast() {
     --max-dt "$MAX_DT" \
     --min-points "$MIN_POINTS" \
     --min-duration "$MIN_DURATION" \
+    --max-hole-size "$MAX_HOLE_SIZE" \
     >>"$log" 2>&1 || { echo "❌ 失败: $d (详见 $log)"; return 1; }
 
   echo "✅ 完成: $d" | tee -a "$log"
 }
 
 export -f run_one_fast
-export PY_FAST RAW OUT FILTER_STRATEGY SMOOTH_VAL MAX_DT MIN_POINTS MIN_DURATION DRYRUN
+export PY_FAST RAW OUT FILTER_STRATEGY SMOOTH_VAL MAX_DT MIN_POINTS MIN_DURATION MAX_HOLE_SIZE DRYRUN
 
 # ========== 并行执行 ==========
 echo "🚀 开始并行处理（$PROCS 进程）..."
