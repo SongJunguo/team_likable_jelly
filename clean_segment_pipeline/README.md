@@ -334,6 +334,20 @@ MAX_SPEED_MPS=500
 max_iterations=15
 ```
 
+### 问题4：environment: line XX: `<...>/.logs/YYYY-MM-DD.log`: No such file or directory
+**原因**：阶段日志目录（`filtered_clean_v4/.logs`、`segmented_clean_v4/.logs`、`interpolated_clean_v4/.logs`）被手动清理或在上次异常中断后缺失，导致 tee/重定向无法写入日志。
+
+**解决**：
+```bash
+# 任选一种：手动补齐或重新跑脚本都会自动创建
+mkdir -p opensky_2024_PRC_dataset/filtered_clean_v4/.logs
+mkdir -p opensky_2024_PRC_dataset/segmented_clean_v4/.logs
+mkdir -p opensky_2024_PRC_dataset/interpolated_clean_v4/.logs
+
+# 重新运行分阶段脚本（会再次自检并创建日志目录）
+bash clean_segment_pipeline/run_staged_pipeline.sh --from 2022-01-01 --to 2022-01-24
+```
+
 ## 📝 与旧流程对比
 
 ### 旧流程入口

@@ -119,6 +119,7 @@ filter_one() {
   local in_f="$RAW/${d}.parquet"
   local out_f="$OUT/${d}.parquet"
   local log="$OUT/.logs/${d}.log"
+  mkdir -p "$(dirname "$log")"
 
   echo "▶️  过滤 $d" | tee "$log"
 
@@ -131,7 +132,7 @@ filter_one() {
     -t_in "$in_f" \
     -t_out "$out_f" \
     -strategy "$FILTER_STRATEGY" \
-    >>\"$log\" 2>&1 || { echo "❌ 失败: $d (详见 $log)"; return 1; }
+    >>"$log" 2>&1 || { echo "❌ 失败: $d (详见 $log)"; return 1; }
 
   echo "✅ 完成: $d" | tee -a "$log"
 }

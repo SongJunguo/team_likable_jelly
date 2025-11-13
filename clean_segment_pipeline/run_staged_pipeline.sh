@@ -66,6 +66,12 @@ FORCE=0
 DRYRUN=0
 LIMIT=0
 
+ensure_logs_dir() {
+  local dir="$1"
+  [[ -z "$dir" ]] && return
+  mkdir -p "$dir" "$dir/.logs"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --raw-dir) RAW="$2"; shift 2;;
@@ -98,6 +104,11 @@ echo "  1. filtered_clean_v1/       (过滤后)"
 echo "  2. segmented_clean_v1/      (切分后)"
 echo "  3. interpolated_clean_v1/   (最终)"
 echo ""
+
+# 阶段输出目录预检查，避免日志目录缺失导致并行任务失败
+ensure_logs_dir "$FILTERED_DIR"
+ensure_logs_dir "$SEGMENTED_DIR"
+ensure_logs_dir "$INTERPOLATED_DIR"
 
 # ========== 阶段1：过滤 ==========
 if [[ "$SKIP_FILTER" == "0" ]]; then

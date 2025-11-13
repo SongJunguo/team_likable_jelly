@@ -129,6 +129,7 @@ interp_one() {
   local in_f="$IN_DIR/segmented_${d}.parquet"
   local out_f="$OUT/interpolated_${d}.parquet"
   local log="$OUT/.logs/${d}.log"
+  mkdir -p "$(dirname "$log")"
 
   echo "▶️  插值 $d" | tee "$log"
 

@@ -133,6 +133,7 @@ split_one() {
   local in_f="$IN_DIR/${d}.parquet"
   local out_f="$OUT/segmented_${d}.parquet"
   local log="$OUT/.logs/${d}.log"
+  mkdir -p "$(dirname "$log")"
 
   echo "▶️  切分 $d" | tee "$log"
 
