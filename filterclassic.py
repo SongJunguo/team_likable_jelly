@@ -34,8 +34,11 @@ from typing import (
     ClassVar,
     Dict,  # for python 3.8 and impunity
     Generic,
+    Iterable,
     Optional,
     Protocol,
+    Sequence,
+    Tuple,
     Type,
     TypedDict,
     TypeVar,
@@ -292,6 +295,176 @@ class FilterDerivativeLoop(filters.FilterBase):
             if after == before and idx + 1 >= self.min_passes:
                 break
         return df
+
+
+class FilterSpatialPCAOutlier(filters.FilterBase):
+    """利用 PCA 主轴重建残差识别“偏离主航迹”的空间异常点。
+
+    算法思路：
+    1. 取经纬（可选高度）构成二维/三维坐标，去均值后做 PCA。
+    2. 仅保留第一主成分（航迹主方向），将点投影再还原，得到重建残差。
+    3. 使用稳健阈值 ``median(residual) + mad_scale * 1.4826 * MAD`` 判定异常。
+    4. 可选滑动窗口（带 50% 重叠）重复步骤 1~3，应对长航段多阶段航迹。
+
+    由于只使用经纬度（角度单位一致），不会引入单位量纲不匹配的问题。
+    """
+
+    MAD_TO_SIGMA = 1.4826
+
+    def __init__(
+        self,
+        *,
+        min_points: int = 80,
+        mad_scale: float = 6.0,
+        window_size: Optional[int] = None,
+        include_altitude: bool = False,
+        stats_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        verbose: bool = False,
+        log_prefix: str = "[SpatialPCA]",
+    ) -> None:
+        self.min_points = int(max(2, min_points))
+        self.mad_scale = float(max(0.1, mad_scale))
+        self.window_size = int(window_size) if window_size else None
+        self.include_altitude = bool(include_altitude)
+        self.stats_callback = stats_callback
+        self.verbose = verbose
+        self.log_prefix = log_prefix
+
+    def _active_columns(self, df: pd.DataFrame) -> list[str]:
+        cols = ["latitude", "longitude"]
+        if self.include_altitude and "altitude" in df.columns:
+            cols.append("altitude")
+        return [c for c in cols if c in df.columns]
+
+    def _prepare_coords(self, df: pd.DataFrame, columns: list[str]) -> tuple[np.ndarray, np.ndarray]:
+        valid_mask = df[columns].notna().all(axis=1).to_numpy()
+        coords = df.loc[valid_mask, columns].to_numpy(dtype=np.float64, copy=True)
+        indices = np.flatnonzero(valid_mask)
+        return coords, indices
+
+    def _compute_residuals(self, coords: np.ndarray) -> Optional[np.ndarray]:
+        if coords.size == 0:
+            return None
+        centered = coords - coords.mean(axis=0, keepdims=True)
+        if np.allclose(centered, 0.0):
+            return np.zeros(coords.shape[0], dtype=np.float64)
+        try:
+            _, _, vh = np.linalg.svd(centered, full_matrices=False)
+        except np.linalg.LinAlgError:
+            return None
+        if vh.size == 0:
+            return None
+        main_axis = vh[0]
+        scores = centered @ main_axis
+        reconstructed = np.outer(scores, main_axis)
+        residual_vec = centered - reconstructed
+        return np.linalg.norm(residual_vec, axis=1)
+
+    def _threshold_mask(self, residuals: np.ndarray) -> Tuple[np.ndarray, Optional[float]]:
+        if residuals is None or residuals.size == 0:
+            return np.zeros(0, dtype=bool), None
+        median = float(np.median(residuals))
+        mad = float(np.median(np.abs(residuals - median)))
+        if np.isnan(mad):
+            mad = 0.0
+        threshold = median + self.mad_scale * self.MAD_TO_SIGMA * mad
+        mask = residuals > threshold
+        return mask, threshold
+
+    def _apply_windows(self, coords: np.ndarray) -> tuple[np.ndarray, Dict[str, Any]]:
+        residuals = self._compute_residuals(coords)
+        base_mask, base_th = self._threshold_mask(residuals)
+        if base_mask.size == 0:
+            base_mask = np.zeros(coords.shape[0], dtype=bool)
+        combined = base_mask.copy()
+        window_thresholds: list[float] = []
+        window_evaluated = 0
+        if self.window_size and self.window_size > 0 and coords.shape[0] >= self.window_size:
+            step = max(self.window_size // 2, 1)
+            for start in range(0, coords.shape[0], step):
+                end = min(start + self.window_size, coords.shape[0])
+                window_len = end - start
+                if window_len < self.min_points:
+                    if end >= coords.shape[0]:
+                        break
+                    continue
+                sub_residuals = self._compute_residuals(coords[start:end])
+                sub_mask, sub_th = self._threshold_mask(sub_residuals)
+                if sub_mask.size:
+                    combined[start:end] |= sub_mask
+                if sub_th is not None:
+                    window_thresholds.append(sub_th)
+                window_evaluated += 1
+                if end >= coords.shape[0]:
+                    break
+        stats = {
+            "global_threshold": float(base_th) if base_th is not None else None,
+            "window_size": int(self.window_size or 0),
+            "windows_evaluated": window_evaluated,
+        }
+        if window_thresholds:
+            stats["window_threshold_min"] = float(np.min(window_thresholds))
+            stats["window_threshold_max"] = float(np.max(window_thresholds))
+        stats["points_flagged"] = int(combined.sum())
+        return combined, stats
+
+    def detect_mask(self, df: pd.DataFrame) -> tuple[np.ndarray, Dict[str, Any]]:
+        columns = self._active_columns(df)
+        full_mask = np.zeros(len(df), dtype=bool)
+        stats: Dict[str, Any] = {
+            "columns": columns,
+            "points_total": 0,
+            "mad_scale": self.mad_scale,
+        }
+        if len(columns) < 2 or df.empty:
+            stats["points_flagged"] = 0
+            return full_mask, stats
+        coords, indices = self._prepare_coords(df, columns)
+        stats["points_total"] = int(coords.shape[0])
+        if coords.shape[0] < self.min_points:
+            stats["points_flagged"] = 0
+            return full_mask, stats
+        window_mask, extra = self._apply_windows(coords)
+        stats.update(extra)
+        if window_mask.any():
+            full_mask[indices[window_mask]] = True
+        return full_mask, stats
+
+    def apply(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return df
+        mask, stats = self.detect_mask(df)
+        if not mask.any():
+            if self.stats_callback and stats.get("points_total", 0) >= self.min_points:
+                enriched = self._attach_flight_info(df, stats)
+                self.stats_callback(enriched)
+            return df
+        columns = self._active_columns(df)
+        df = df.copy()
+        df.loc[mask, columns] = np.nan
+        enriched_stats = self._attach_flight_info(df, stats)
+        if self.verbose:
+            fid = enriched_stats.get("flight_id")
+            flagged = enriched_stats.get("points_flagged", 0)
+            total = enriched_stats.get("points_total", 0)
+            threshold = enriched_stats.get("global_threshold")
+            print(
+                f"{self.log_prefix} flight_id={fid} flagged {flagged}/{total} (threshold={threshold})"
+            )
+        if self.stats_callback:
+            self.stats_callback(enriched_stats)
+        return df
+
+    def _attach_flight_info(self, df: pd.DataFrame, stats: Dict[str, Any]) -> Dict[str, Any]:
+        result = stats.copy()
+        if "flight_id" in df.columns:
+            try:
+                result["flight_id"] = int(df["flight_id"].iloc[0])
+            except Exception:
+                result["flight_id"] = None
+        else:
+            result["flight_id"] = None
+        return result
 
 
 class FilterMaxSpeed(filters.FilterBase):

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import argparse
 import os
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -21,6 +21,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from filter_trajs import build_filter_chain, nointerpolate
+from filterclassic import FilterSpatialPCAOutlier
 from test_python.analysis.plot_flight_before_after_filter import plot_compare
 
 RAW_DEFAULT = "/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories"
@@ -32,6 +33,22 @@ REASON_GROUPS: Dict[str, List[str]] = {
 SPEED_Y_RANGE = (-100.0, 1000.0)
 ACCEL_Y_LIMIT = 500.0
 EARTH_RADIUS_M = 6_371_000.0
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    try:
+        return int(value) if value is not None else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    try:
+        return float(value) if value is not None else default
+    except (TypeError, ValueError):
+        return default
 
 
 def load_single_flight(path: str, flight_id: int) -> pd.DataFrame:
@@ -280,7 +297,7 @@ def default_metrics_path(out_pdf: str) -> str:
     return f"{out_pdf}_metrics.pdf"
 
 
-def _attach_metrics(df_target: pd.DataFrame, metrics: pd.DataFrame | None, prefix: str = "") -> pd.DataFrame:
+def _attach_metrics(df_target: pd.DataFrame, metrics: Optional[pd.DataFrame], prefix: str = "") -> pd.DataFrame:
     if metrics is None or len(metrics) != len(df_target):
         return df_target
     cols = []
@@ -296,8 +313,8 @@ def save_filtered_parquet(
     df_raw: pd.DataFrame,
     df_filtered: pd.DataFrame,
     out_path: str,
-    metrics_filtered: pd.DataFrame | None = None,
-    metrics_raw: pd.DataFrame | None = None,
+    metrics_filtered: Optional[pd.DataFrame] = None,
+    metrics_raw: Optional[pd.DataFrame] = None,
 ) -> None:
     """将过滤结果写成 Parquet，并尽量保持原始列顺序，附带 Raw/Filter speed/accel。"""
     df_to_save = df_filtered.copy()
@@ -309,6 +326,23 @@ def save_filtered_parquet(
     out_file = Path(out_path)
     out_file.parent.mkdir(parents=True, exist_ok=True)
     df_to_save.to_parquet(out_file, index=False)
+
+
+def detect_spatial_pca_outliers(
+    df: pd.DataFrame,
+    *,
+    min_points: int,
+    mad_scale: float,
+    window_size: Optional[int],
+) -> Tuple[np.ndarray, Dict[str, object]]:
+    detector = FilterSpatialPCAOutlier(
+        min_points=min_points,
+        mad_scale=mad_scale,
+        window_size=window_size if window_size and window_size > 0 else None,
+        include_altitude=False,
+    )
+    mask, stats = detector.detect_mask(df)
+    return mask.astype(bool, copy=False), stats
 
 
 def main() -> None:
@@ -326,11 +360,59 @@ def main() -> None:
         "--metrics-pdf",
         help="速度/加速度图输出路径（默认: 在 out-pdf 同目录添加 _metrics 后缀）",
     )
+    parser.add_argument(
+        "--show-pca",
+        action="store_true",
+        help="在 Raw vs Filter 图上标记 PCA 空间异常点",
+    )
+    parser.add_argument("--pca-mad-scale", type=float, help="覆盖默认的 MAD scale 参数")
+    parser.add_argument("--pca-min-points", type=int, help="覆盖默认的 min_points 参数")
+    parser.add_argument(
+        "--pca-window-size",
+        type=int,
+        help="覆盖默认的 PCA 滑窗大小（<=0 表示禁用滑窗）",
+    )
     args = parser.parse_args()
 
     raw_file = os.path.join(args.raw_dir, f"{args.date}.parquet")
     df_raw = load_single_flight(raw_file, args.flight_id)
     df_filt = filter_single_flight(df_raw.copy(), args.strategy)
+
+    pca_annotations = None
+    if args.show_pca:
+        default_min_points = _env_int("PCA_MIN_POINTS", 80)
+        default_mad_scale = _env_float("PCA_MAD_SCALE", 6.0)
+        default_window = _env_int("PCA_WINDOW_SIZE", 0)
+        min_points = args.pca_min_points or default_min_points
+        mad_scale = args.pca_mad_scale or default_mad_scale
+        window_size = args.pca_window_size if args.pca_window_size is not None else default_window
+        mask, stats = detect_spatial_pca_outliers(
+            df_raw,
+            min_points=min_points,
+            mad_scale=mad_scale,
+            window_size=window_size if window_size and window_size > 0 else None,
+        )
+        flagged = int(stats.get("points_flagged", 0))
+        total = int(stats.get("points_total", 0))
+        if total < min_points:
+            print(
+                f"⚠️ PCA 跳过：有效点 {total} < min_points {min_points}"
+            )
+        else:
+            threshold = stats.get("global_threshold")
+            print(
+                "📍 PCA 结果: "
+                f"flagged {flagged}/{total} (threshold={threshold})"
+            )
+        if mask.any():
+            pca_annotations = [
+                {
+                    "mask": mask,
+                    "color": "tab:red",
+                    "label": "PCA异常",
+                    "columns": {"latitude", "longitude"},
+                }
+            ]
 
     summary, reasons = summarize_filter_effect(df_raw, df_filt)
     print_summary(summary, reasons)
@@ -351,7 +433,13 @@ def main() -> None:
         print(f"💾 Saved filtered trajectory to {args.out_parquet}")
 
     cols = [c for c in ["flight_id", "timestamp", "latitude", "longitude", "altitude"] if c in df_raw.columns]
-    plot_compare(df_raw[cols], df_filt[cols], args.flight_id, args.out_pdf)
+    plot_compare(
+        df_raw[cols],
+        df_filt[cols],
+        args.flight_id,
+        args.out_pdf,
+        annotations=pca_annotations,
+    )
     print(f"✅ Saved {args.out_pdf}")
 
 

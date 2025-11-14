@@ -6,7 +6,11 @@
 """
 
 import argparse
+import datetime
 import os
+import fcntl
+from pathlib import Path
+from typing import Callable, Optional
 
 import pandas as pd
 import numpy as np
@@ -16,6 +20,7 @@ from filterclassic import (
     FilterCstPosition,
     FilterCstSpeed,
     FilterIsolated,
+    FilterSpatialPCAOutlier,
     MyFilterDerivative,
     FilterShortBurst,
     FilterDerivativeLoop,
@@ -68,7 +73,72 @@ def nointerpolate(x):
     return x
 
 
-def build_filter_chain(strategy: str) -> filters.FilterBase:
+class PCAStatsWriter:
+    """跨进程安全地把 PCA 统计写入 CSV。"""
+
+    HEADER = [
+        "timestamp_utc",
+        "source_file",
+        "strategy",
+        "flight_id",
+        "points_total",
+        "points_flagged",
+        "global_threshold",
+        "window_size",
+        "windows_evaluated",
+        "window_threshold_min",
+        "window_threshold_max",
+        "mad_scale",
+    ]
+
+    def __init__(self, path: str, *, source_file: Optional[str] = None, strategy: Optional[str] = None) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.source_file = source_file
+        self.strategy = strategy
+        self._ensure_header()
+
+    def _ensure_header(self) -> None:
+        if not self.path.exists() or self.path.stat().st_size == 0:
+            with self.path.open("w", encoding="utf-8") as fh:
+                fh.write(",".join(self.HEADER) + "\n")
+
+    def write(self, stats: dict[str, object]) -> None:
+        row = {
+            "timestamp_utc": datetime.datetime.utcnow().isoformat(),
+            "source_file": stats.get("source_file") or self.source_file or "",
+            "strategy": stats.get("strategy") or self.strategy or "",
+            "flight_id": stats.get("flight_id", ""),
+            "points_total": stats.get("points_total", ""),
+            "points_flagged": stats.get("points_flagged", ""),
+            "global_threshold": stats.get("global_threshold", ""),
+            "window_size": stats.get("window_size", ""),
+            "windows_evaluated": stats.get("windows_evaluated", ""),
+            "window_threshold_min": stats.get("window_threshold_min", ""),
+            "window_threshold_max": stats.get("window_threshold_max", ""),
+            "mad_scale": stats.get("mad_scale", ""),
+        }
+        line = ",".join(self._stringify(row[h]) for h in self.HEADER) + "\n"
+        with self.path.open("a", encoding="utf-8") as fh:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            fh.write(line)
+            fh.flush()
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+    @staticmethod
+    def _stringify(value: object) -> str:
+        if value in (None, ""):
+            return ""
+        if isinstance(value, float):
+            return f"{value:.6f}"
+        return str(value)
+
+
+def build_filter_chain(
+    strategy: str,
+    *,
+    pca_stats_callback: Optional[Callable[[dict[str, object]], None]] = None,
+) -> filters.FilterBase:
     if strategy == "classic":
         # 构建经典过滤器链：按数据清理流程文档的顺序组合多个过滤器
         # 使用管道操作符 | 实现链式过滤，每个过滤器依次处理数据
@@ -126,7 +196,7 @@ def build_filter_chain(strategy: str) -> filters.FilterBase:
         )
         # 只监控高度一列，避免默认参数把经纬度也纳入票决
         altitude_filter.columns = {"altitude": dict(first=alt_first, second=alt_second)}
-        return (
+        chain = (
             FilterCstLatLon()
             | FilterCstPosition()
             | FilterCstSpeed()
@@ -138,8 +208,11 @@ def build_filter_chain(strategy: str) -> filters.FilterBase:
                 vote_threshold=vote_threshold
             )
             | altitude_filter               # 高度三点投票
-            | FilterIsolated()
         )
+        spatial_pca = _build_spatial_pca(pca_stats_callback)
+        if spatial_pca is not None:
+            chain = chain | spatial_pca
+        return chain | FilterIsolated()
     elif strategy == "classic_dp_loop":
         dp_relaxed = _make_derivative()
         return (
@@ -164,6 +237,24 @@ def build_filter_chain(strategy: str) -> filters.FilterBase:
         raise Exception(f"strategy '{strategy}' not implemented")
 
 
+def _build_spatial_pca(
+    stats_callback: Optional[Callable[[dict[str, object]], None]],
+) -> Optional[FilterSpatialPCAOutlier]:
+    enable = _get_env_int("ENABLE_SPATIAL_PCA", 1) != 0
+    if not enable:
+        return None
+    min_points = _get_env_int("PCA_MIN_POINTS", 80)
+    mad_scale = _get_env_float("PCA_MAD_SCALE", 6.0)
+    window_size = _get_env_int("PCA_WINDOW_SIZE", 0)
+    return FilterSpatialPCAOutlier(
+        min_points=min_points,
+        mad_scale=mad_scale,
+        window_size=window_size if window_size > 0 else None,
+        include_altitude=False,
+        stats_callback=stats_callback,
+    )
+
+
 def read_trajectories(f, strategy):
     """读取轨迹文件并按策略执行滤波。"""
 
@@ -178,7 +269,22 @@ def read_trajectories(f, strategy):
         .reset_index(drop=True)
     )  # .head(10_000)
 
-    filter_chain = build_filter_chain(strategy)
+    stats_callback = None
+    stats_path = os.environ.get("PCA_STATS_CSV", "").strip()
+    if stats_path:
+        writer = PCAStatsWriter(
+            stats_path,
+            source_file=os.path.basename(f),
+            strategy=strategy,
+        )
+        stats_callback = lambda payload: writer.write(
+            {
+                **payload,
+                "strategy": strategy,
+                "source_file": os.path.basename(f),
+            }
+        )
+    filter_chain = build_filter_chain(strategy, pca_stats_callback=stats_callback)
 
     # 执行过滤器链：应用所有过滤器并禁用内置插值
     dftrafficin = (

@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import argparse
 import os
+from typing import Optional
+
 import pandas as pd
 import matplotlib.pyplot as plt
 
 
-def load_day(path: str, columns: list[str] | None = None) -> pd.DataFrame:
+def load_day(path: str, columns: Optional[list[str]] = None) -> pd.DataFrame:
     df = pd.read_parquet(path, columns=columns)
     # 基础规范：类型与排序
     if "flight_id" in df.columns:
@@ -33,7 +35,13 @@ def load_day(path: str, columns: list[str] | None = None) -> pd.DataFrame:
     return df
 
 
-def plot_compare(df_raw: pd.DataFrame, df_filt: pd.DataFrame, flight_id: int, out_pdf: str) -> None:
+def plot_compare(
+    df_raw: pd.DataFrame,
+    df_filt: pd.DataFrame,
+    flight_id: int,
+    out_pdf: str,
+    annotations: Optional[list[dict]] = None,
+) -> None:
     r = df_raw[df_raw["flight_id"] == flight_id]
     f = df_filt[df_filt["flight_id"] == flight_id]
     fig, axes = plt.subplots(3, 1, figsize=(11, 7), sharex=True)
@@ -47,6 +55,24 @@ def plot_compare(df_raw: pd.DataFrame, df_filt: pd.DataFrame, flight_id: int, ou
             ax.plot(r["timestamp"], r[col], ".", color="tab:gray", alpha=0.5, label="Raw")
         if col in f.columns and len(f) > 0:
             ax.plot(f["timestamp"], f[col], ".", color="tab:blue", alpha=0.9, label="Filter")
+        if annotations and col in {"latitude", "longitude"}:
+            for ann in annotations:
+                if col not in ann.get("columns", {"latitude", "longitude"}):
+                    continue
+                mask = ann.get("mask")
+                if mask is None or len(mask) != len(r):
+                    continue
+                label = ann.get("label", "PCA Outlier")
+                color = ann.get("color", "tab:red")
+                ax.scatter(
+                    r["timestamp"].to_numpy()[mask],
+                    r[col].to_numpy()[mask],
+                    color=color,
+                    marker="x",
+                    s=20,
+                    linewidths=0.8,
+                    label=label,
+                )
         ax.set_ylabel(lab)
         ax.grid(True, alpha=0.25)
         ax.legend(loc="best")

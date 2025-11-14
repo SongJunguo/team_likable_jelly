@@ -20,6 +20,7 @@
 3. ✅ 切分后的segment内部干净、时间连续，插值质量更高
 4. ✅ 不对含异常段的数据插值，避免污染传播
 5. ✅ 最终轨迹：0个NaN + 0个异常点 + 1Hz均匀采样
+6. ✅ 新增 PCA 空间异常检测：距离主航迹很远的孤立段被自动剔除，并写入可追踪的统计日志
 
 ## 📂 目录结构
 
@@ -134,6 +135,11 @@ MAX_ACCEL_MPS2=25.0      # 加速度阈值（FilterMaxSpeedSkipNaNWithVoting读�
 VOTE_THRESHOLD=2         # 投票阈值（≥2票才删除，FilterMaxSpeedSkipNaNWithVoting读取）
 ALT_DERIV_FIRST_FTPS=151 # 高度一阶导阈值（ft/s）
 ALT_DERIV_SECOND_FTPS2=51 # 高度二阶导阈值（ft/s²）
+ENABLE_SPATIAL_PCA=1     # 1=启用PCA空间异常检测
+PCA_MIN_POINTS=80        # 至少多少有效点才运行PCA
+PCA_MAD_SCALE=6.0        # 阈值 = median(residual) + scale * 1.4826 * MAD
+PCA_WINDOW_SIZE=256      # 滑动窗口大小（≤0表示仅全局PCA）
+PCA_STATS_CSV="$REPORT_DIR/pca_flags.csv"  # 统计落盘路径（自动加锁，支持多进程）
 ```
 
 ### 切分参数
@@ -149,6 +155,15 @@ MAX_HOLE_SIZE="$MAX_DT"    # 最大插值间隔，默认与MAX_DT保持一致，
 SMOOTH=1e-2        # csaps平滑系数
 # MAX_HOLE_SIZE 同上，由03/fast脚本透传给 interpolate.py 限制最大补洞长度
 ```
+
+### PCA 空间异常检测
+
+- **触发条件**：同一航班有效经纬度点数 ≥ `PCA_MIN_POINTS`。
+- **检测方式**：对 `(latitude, longitude)` 做 PCA，仅保留第一主轴并计算每个点的重建残差。
+- **阈值**：`median(residual) + PCA_MAD_SCALE * 1.4826 * MAD`，MAD 是残差相对中位数的绝对偏差的中位数。
+- **滑动窗口**：`PCA_WINDOW_SIZE > 0` 时自动使用 50% overlap 的滑窗重复检测，可在长航段中捕获局部漂移。
+- **输出**：所有航班的 `flagged/total/threshold` 等指标写入 `PCA_STATS_CSV`（默认 `reports/quality_check_clean_v6/pca_flags.csv`，支持多进程追加）。
+- **可视化**：`test_python/analysis/filter_and_plot_single_flight.py --show-pca ...` 会在 Raw vs Filter 图上高亮被 PCA 删除的点，便于复审。
 
 ### 质量检测开关（⭐新增）
 ```bash
