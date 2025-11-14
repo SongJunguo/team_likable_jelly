@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source clean_segment_pipeline/config.sh
-export STRATEGY="clean_segment_interp" #"classic_dp_loop"  #"clean_segment_interp"  # 新策略名
-# export MAX_SPEED_MPS=3000.0        # 速度阈值（可调：550或600）单位 m/s
-# export MAX_ACCEL_MPS2=1000.0      # 加速度阈值
-# export ALT_DERIV_FIRST_FTPS=201   # 高度一阶导阈值（ft/s）
-# export ALT_DERIV_SECOND_FTPS2=51  # 高度二阶导阈值（ft/s²）
-# export VOTE_THRESHOLD=2            # 投票阈值（≥2票才删除）
+# source clean_segment_pipeline/config.sh
+export STRATEGY="clean_segment_interp" #"classic_dp_loop"  # 
+export MAX_SPEED_MPS=600.0    # 速度阈值（可调：550或600）单位 m/s
+export MAX_ACCEL_MPS2=450.0      # 加速度阈值 （m/s²）
+export ALT_DERIV_FIRST_FTPS=201   # 高度一阶导阈值（ft/s）
+export ALT_DERIV_SECOND_FTPS2=51  # 高度二阶导阈值（ft/s²）
+export VOTE_THRESHOLD=2            # 投票阈值（≥2票才删除）
+export ENABLE_SPATIAL_PCA=1        # 1=启用 PCA 空间异常检测
+export PCA_MIN_POINTS=10           # 至少多少有效点才运行PCA
+export PCA_MAD_SCALE=6.0           # 阈值=median+scale*1.4826*MAD
+export PCA_WINDOW_SIZE=64         # 滑动窗口大小（≤0禁用）
 
-DATE="${1:-2022-01-07}"
-FLIGHT_ID="${2:-248867985}"
+DATE="${1:-2022-01-15}"
+FLIGHT_ID="${2:-249019374}"
 # STRATEGY="${3:-clean_segment_interp}"
 RAW_DIR="${RAW_DIR:-/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories}"
 OUT_DIR="${OUT_DIR:-reports/single_flight}"
