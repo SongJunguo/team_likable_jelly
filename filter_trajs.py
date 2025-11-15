@@ -104,6 +104,9 @@ class PCAStatsWriter:
                 fh.write(",".join(self.HEADER) + "\n")
 
     def write(self, stats: dict[str, object]) -> None:
+        # 运行期间目录可能被清理，写入前再次确保目录/文件存在
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_header()
         row = {
             "timestamp_utc": datetime.datetime.utcnow().isoformat(),
             "source_file": stats.get("source_file") or self.source_file or "",
@@ -212,6 +215,12 @@ def build_filter_chain(
         spatial_pca = _build_spatial_pca(pca_stats_callback)
         if spatial_pca is not None:
             chain = chain | spatial_pca
+        if _get_env_int("ENABLE_SKIPNAN_POST_PCA", 1):
+            post_iter = _get_env_int("POST_PCA_SKIPNAN_MAX_ITER", 3)
+            chain = chain | FilterMaxSpeedSkipNaN(
+                max_speed_mps=max_speed_mps,
+                max_iterations=post_iter,
+            )
         return chain | FilterIsolated()
     elif strategy == "classic_dp_loop":
         dp_relaxed = _make_derivative()

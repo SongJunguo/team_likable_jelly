@@ -5,10 +5,10 @@
 export RAW_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories"
 
 # 新流程输出目录（清晰命名）
-export FILTERED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/filtered_clean__PCA_v1"
-export SEGMENTED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_clean__PCA_v1"
-export INTERPOLATED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/interpolated_clean__PCA_v1"
-export REPORT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/reports/quality_check_clean__PCA_v1"
+export FILTERED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/filtered_clean__PCA_v3"
+export SEGMENTED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_clean__PCA_v3"
+export INTERPOLATED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/interpolated_clean__PCA_v3"
+export REPORT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/reports/quality_check_clean__PCA_v3"
 
 # ========== 过滤参数 ==========
 export FILTER_STRATEGY="clean_segment_interp"  # 新策略名
@@ -18,16 +18,18 @@ export ALT_DERIV_FIRST_FTPS=201   # 高度一阶导阈值（ft/s）
 export ALT_DERIV_SECOND_FTPS2=51  # 高度二阶导阈值（ft/s²）
 export VOTE_THRESHOLD=2            # 投票阈值（≥2票才删除）
 export ENABLE_SPATIAL_PCA=1        # 1=启用 PCA 空间异常检测
-export PCA_MIN_POINTS=80           # 至少多少有效点才运行PCA
+export PCA_MIN_POINTS=40           # 至少多少有效点才运行PCA
 export PCA_MAD_SCALE=6.0           # 阈值=median+scale*1.4826*MAD
 export PCA_WINDOW_SIZE=256         # 滑动窗口大小（≤0禁用）
 export PCA_STATS_CSV="$REPORT_DIR/pca_flags.csv"  # 统计输出
+export ENABLE_SKIPNAN_POST_PCA=1    # 1=在PCA后再执行一次跨NaN速度检测
+export POST_PCA_SKIPNAN_MAX_ITER=30  # 额外跨NaN速度检测最大迭代次数
 
 # ========== 切分参数 ==========
 export REQ_COLS="latitude longitude altitude"
-export MAX_DT=300                # 最大时间间隔（秒）
-export MIN_POINTS=30            # 最小点数
-export MIN_DURATION=120         # 最小时长（秒）
+export MAX_DT=120                # 最大时间间隔（秒）
+export MIN_POINTS=300            # 最小点数
+export MIN_DURATION=600         # 最小时长（秒）
 export MAX_HOLE_SIZE="$MAX_DT"   # 最大插值间隔（默认跟MAX_DT一致，可单独调整）
 
 # ========== 插值参数 ==========
