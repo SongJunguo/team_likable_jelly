@@ -3,11 +3,12 @@
 请严格遵守以下规则生成或修改代码、命令与文档（除非用户明确要求临时偏离）：
 
 ## 环境与命令
-- 任何**数据处理**相关命令/脚本，请假设使用 conda 环境：`conda activate opensky`。
+- 任何**数据处理**相关命令/脚本，请假设使用 conda 环境：`conda activate data_wrangler`（Python 3.14，已安装 pandas、numpy、pyarrow、scipy、scikit-learn、matplotlib、seaborn、polars、geopandas、cartopy 等）。
 - 任何**深度学习训练/测试**命令/脚本，请假设使用 conda 环境：`conda activate Time-MoE`。
 - 命令行运行环境：Ubuntu 18.04 容器，无 sudo 权限，默认 root 用户；请避免需要 sudo 的操作。
 - 服务器资源：80 核 CPU、512GB 内存、8×V100 32GB（SXM2）。
 - 回答语言：**中文**。
+- **注意**：`traffic` 包暂不兼容 Python 3.14，如需使用请临时切换到 `opensky` 环境（Python 3.9）。
 
 ## 数据与目录规范
 - 飞行轨迹清洗后的数据（parquet，365 个文件）路径：

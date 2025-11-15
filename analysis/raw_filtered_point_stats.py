@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-Compare raw vs filtered trajectories on two aspects:
-1. Total points / retention ratio
-2. Latitude/longitude/altitude missing ratios (any NaN means the row is missing)
+多目录轨迹统计：
+- raw / filtered / segmented / interpolated 的文件数、总点数、体积
+- raw vs filtered 的点数保留率
+- 经/纬/高（latitude, longitude, altitude）以及任一列缺失的数量与比例
+- 同一个 CSV 输出汇总与逐文件缺失情况
 """
 
 from __future__ import annotations
@@ -12,12 +14,11 @@ import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import pyarrow.types as patypes
-
 
 RAW_DEFAULT = Path(
     "/workspace/aircraft_trajectory/team_likable_jelly"
@@ -26,6 +27,14 @@ RAW_DEFAULT = Path(
 FILTERED_DEFAULT = Path(
     "/workspace/aircraft_trajectory/team_likable_jelly"
     "/opensky_2024_PRC_dataset/filtered_clean__PCA_v3"
+)
+SEGMENTED_DEFAULT = Path(
+    "/workspace/aircraft_trajectory/team_likable_jelly"
+    "/opensky_2024_PRC_dataset/segmented_clean__PCA_v3"
+)
+INTERPOLATED_DEFAULT = Path(
+    "/workspace/aircraft_trajectory/team_likable_jelly"
+    "/opensky_2024_PRC_dataset/interpolated_clean__PCA_v3"
 )
 
 COLUMNS: Tuple[str, ...] = ("latitude", "longitude", "altitude")
@@ -47,6 +56,14 @@ class DatasetStats:
     total_size: int = 0
     nan_counts: Dict[str, int] = field(default_factory=lambda: {col: 0 for col in COLUMNS})
     any_nan: int = 0
+
+
+@dataclass
+class DatasetResult:
+    label: str
+    path: Path
+    stats: DatasetStats
+    files: List[FileSummary]
 
 
 def _iter_parquet_files(directory: Path) -> List[Path]:
@@ -134,44 +151,52 @@ def _collect_dataset_stats(directory: Path, max_workers: Optional[int]) -> Tuple
     return stats, summaries
 
 
-def _print_point_summary(raw_stats: DatasetStats, filtered_stats: DatasetStats) -> None:
+def _format_gb(num_bytes: int) -> str:
+    return f"{num_bytes / (1024 ** 3):.2f} GB"
+
+
+def _build_point_comparison_text(raw_stats: DatasetStats, filtered_stats: DatasetStats) -> str:
     raw_points = raw_stats.total_points
     filtered_points = filtered_stats.total_points
     dropped = raw_points - filtered_points
     retention = filtered_points / raw_points * 100 if raw_points else 0.0
     drop_ratio = dropped / raw_points * 100 if raw_points else 0.0
 
-    print("Point Summary")
-    print("=" * 60)
-    print(f"Raw files:       {raw_stats.files}")
-    print(f"Raw points:      {_format_number(raw_points)}")
-    print(f"Filtered files:  {filtered_stats.files}")
-    print(f"Filtered points: {_format_number(filtered_points)}")
-    print("-" * 60)
-    print(f"Points removed:  {_format_number(dropped)}")
-    print(f"Drop ratio:      {drop_ratio:.3f}%")
-    print(f"Retention ratio: {retention:.3f}%")
-    print("=" * 60)
+    lines = [
+        "",
+        "Point Comparison (raw -> filtered)",
+        "=" * 60,
+        f"Raw points:      {_format_number(raw_points)} in {raw_stats.files} files",
+        f"Filtered points: {_format_number(filtered_points)} in {filtered_stats.files} files",
+        "-" * 60,
+        f"Points removed:  {_format_number(dropped)}",
+        f"Drop ratio:      {drop_ratio:.3f}%",
+        f"Retention ratio: {retention:.3f}%",
+        "=" * 60,
+    ]
+    return "\n".join(lines)
 
 
-def _print_nan_summary(label: str, stats: DatasetStats) -> None:
-    print(f"\nNaN Summary - {label}")
-    print("-" * 60)
+def _build_dataset_report_text(result: DatasetResult) -> str:
+    stats = result.stats
+    lines = [
+        "",
+        f"Dataset Summary - {result.label}",
+        "=" * 60,
+        f"Path:          {result.path}",
+        f"Files:         {stats.files}",
+        f"Total points:  {_format_number(stats.total_points)}",
+        f"Total size:    {_format_gb(stats.total_size)}",
+        "-" * 60,
+    ]
     for col in COLUMNS:
         count = stats.nan_counts[col]
-        ratio = _format_percent(count, stats.total_points)
-        print(f"{col:<10}: {count:,} rows ({ratio})")
-    ratio_any = _format_percent(stats.any_nan, stats.total_points)
-    print(f"{'any_nan':<10}: {stats.any_nan:,} rows ({ratio_any})")
+        lines.append(f"{col:<10}: {count:,} rows ({_format_percent(count, stats.total_points)})")
+    lines.append(f"{'any_nan':<10}: {stats.any_nan:,} rows ({_format_percent(stats.any_nan, stats.total_points)})")
+    return "\n".join(lines)
 
 
-def _save_ratio_csv(
-    raw_stats: DatasetStats,
-    filtered_stats: DatasetStats,
-    raw_files: List[FileSummary],
-    filtered_files: List[FileSummary],
-    output_path: Path,
-) -> None:
+def _save_ratio_csv(results: Sequence[DatasetResult], output_path: Path) -> None:
     import csv
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -179,38 +204,64 @@ def _save_ratio_csv(
         "dataset",
         "file_name",
         "total_points",
+        "latitude_nan_count",
+        "longitude_nan_count",
+        "altitude_nan_count",
+        "any_nan_count",
         "latitude_nan_ratio",
         "longitude_nan_ratio",
         "altitude_nan_ratio",
         "any_nan_ratio",
+        "point_ratio",
     ]
 
     def ratio_row(
-        dataset: str,
+        label: str,
         file_name: str,
         points: int,
-        nan_counts: Dict[str, int],
+        counts: Dict[str, int],
         any_nan: int,
+        dataset_total: int,
     ) -> List[str]:
         total = points or 1
-        ratios = [nan_counts[col] / total for col in COLUMNS]
+        ratios = [counts[col] / total for col in COLUMNS]
         ratios.append(any_nan / total)
-        ratio_values = [f"{value:.10f}" for value in ratios]
-        return [dataset, file_name, str(points), *ratio_values]
+        share = points / dataset_total if dataset_total else 0.0
+        return [
+            label,
+            file_name,
+            str(points),
+            str(counts["latitude"]),
+            str(counts["longitude"]),
+            str(counts["altitude"]),
+            str(any_nan),
+            *[f"{value:.10f}" for value in ratios],
+            f"{share:.10f}",
+        ]
 
-    rows: List[List[str]] = [
-        ratio_row("raw", "__TOTAL__", raw_stats.total_points, raw_stats.nan_counts, raw_stats.any_nan),
-        ratio_row("filtered", "__TOTAL__", filtered_stats.total_points, filtered_stats.nan_counts, filtered_stats.any_nan),
-    ]
-
-    for summary in raw_files:
+    rows: List[List[str]] = []
+    for result in results:
         rows.append(
-            ratio_row("raw", summary.file_name, summary.points, summary.nan_counts, summary.any_nan)
+            ratio_row(
+                result.label,
+                "__TOTAL__",
+                result.stats.total_points,
+                result.stats.nan_counts,
+                result.stats.any_nan,
+                result.stats.total_points,
+            )
         )
-    for summary in filtered_files:
-        rows.append(
-            ratio_row("filtered", summary.file_name, summary.points, summary.nan_counts, summary.any_nan)
-        )
+        for summary in result.files:
+            rows.append(
+                ratio_row(
+                    result.label,
+                    summary.file_name,
+                    summary.points,
+                    summary.nan_counts,
+                    summary.any_nan,
+                    result.stats.total_points,
+                )
+            )
 
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -220,47 +271,82 @@ def _save_ratio_csv(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Compare raw vs filtered trajectory stats, including nan ratios."
+        description="统计 raw/filtered/segmented/interpolated 的点数与经纬高缺失情况（多进程）"
     )
-    parser.add_argument("--raw-dir", type=Path, default=RAW_DEFAULT, help="Raw trajectory directory")
-    parser.add_argument(
-        "--filtered-dir",
-        type=Path,
-        default=FILTERED_DEFAULT,
-        help="Filtered trajectory directory",
-    )
+    parser.add_argument("--raw-dir", type=Path, default=RAW_DEFAULT, help="原始数据目录（可选）")
+    parser.add_argument("--filtered-dir", type=Path, default=FILTERED_DEFAULT, help="过滤后目录（可选）")
+    parser.add_argument("--segment-dir", type=Path, default=SEGMENTED_DEFAULT, help="切分后目录（可选）")
+    parser.add_argument("--interpolated-dir", type=Path, default=INTERPOLATED_DEFAULT, help="插值后目录（可选）")
     parser.add_argument(
         "--max-workers",
         type=int,
         default=None,
-        help="Maximum worker processes (auto by default)",
+        help="最大并行进程数（默认自动）",
     )
     parser.add_argument(
         "--output-csv",
         type=Path,
         default=None,
-        help="CSV output path包含汇总与逐文件缺失率（raw 行在前，filtered 行随后）",
+        help="输出 CSV（含各目录汇总与逐文件缺失率）",
     )
+    parser.add_argument("--summary-txt", type=Path, default=None, help="输出整体汇总的 txt")
+    parser.add_argument("--skip-raw", action="store_true", help="跳过 raw 目录")
+    parser.add_argument("--skip-filtered", action="store_true", help="跳过 filtered 目录")
+    parser.add_argument("--skip-segmented", action="store_true", help="跳过 segmented 目录")
+    parser.add_argument("--skip-interpolated", action="store_true", help="跳过 interpolated 目录")
     return parser.parse_args()
+
+
+def _gather_datasets(args: argparse.Namespace) -> List[DatasetResult]:
+    dataset_specs: List[Tuple[str, Optional[Path], bool]] = [
+        ("raw", args.raw_dir, args.skip_raw),
+        ("filtered", args.filtered_dir, args.skip_filtered),
+        ("segmented", args.segment_dir, args.skip_segmented),
+        ("interpolated", args.interpolated_dir, args.skip_interpolated),
+    ]
+    results: List[DatasetResult] = []
+    for label, path, skipped in dataset_specs:
+        if skipped or path is None:
+            continue
+        path = Path(path)
+        if not path.exists():
+            print(f"[WARN] Skip {label}: {path} 不存在")
+            continue
+        try:
+            stats, files = _collect_dataset_stats(path, args.max_workers)
+        except FileNotFoundError as exc:
+            print(f"[WARN] Skip {label}: {exc}")
+            continue
+        results.append(DatasetResult(label=label, path=path, stats=stats, files=files))
+    return results
 
 
 def main() -> None:
     args = parse_args()
-    print(f"Raw directory:      {args.raw_dir}")
-    print(f"Filtered directory: {args.filtered_dir}")
-    if args.max_workers:
-        print(f"Max workers:        {args.max_workers}")
+    datasets = _gather_datasets(args)
+    if not datasets:
+        raise SystemExit("未找到可用的数据目录")
 
-    raw_stats, raw_files = _collect_dataset_stats(args.raw_dir, args.max_workers)
-    filtered_stats, filtered_files = _collect_dataset_stats(args.filtered_dir, args.max_workers)
+    dataset_map = {result.label: result for result in datasets}
+    summary_lines: List[str] = []
+    if "raw" in dataset_map and "filtered" in dataset_map:
+        comparison_text = _build_point_comparison_text(dataset_map["raw"].stats, dataset_map["filtered"].stats)
+        print(comparison_text)
+        summary_lines.append(comparison_text)
 
-    _print_point_summary(raw_stats, filtered_stats)
-    _print_nan_summary("Raw", raw_stats)
-    _print_nan_summary("Filtered", filtered_stats)
+    for result in datasets:
+        report_text = _build_dataset_report_text(result)
+        print(report_text)
+        summary_lines.append(report_text)
 
     if args.output_csv:
-        _save_ratio_csv(raw_stats, filtered_stats, raw_files, filtered_files, args.output_csv)
-        print(f"\nNaN ratio CSV saved to: {args.output_csv}")
+        _save_ratio_csv(datasets, args.output_csv)
+        print(f"\n统计结果已写入: {args.output_csv}")
+
+    if args.summary_txt:
+        args.summary_txt.parent.mkdir(parents=True, exist_ok=True)
+        args.summary_txt.write_text("\n\n".join(summary_lines).strip() + "\n", encoding="utf-8")
+        print(f"汇总摘要写入: {args.summary_txt}")
 
 
 if __name__ == "__main__":
