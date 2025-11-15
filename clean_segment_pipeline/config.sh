@@ -40,7 +40,7 @@ export SMOOTH=1e-2              # csaps平滑系数
 export FILTER_PROCS=24
 export SPLIT_PROCS=24
 export INTERP_PROCS=24
-
+export MAX_WORKERS=40 #用于检测raw和filter点数的差异
 # ========== 日期范围 ==========
 export DATE_FROM="2022-01-01"
 export DATE_TO="2022-01-24"
