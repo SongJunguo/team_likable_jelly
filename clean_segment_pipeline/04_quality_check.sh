@@ -78,12 +78,21 @@ if [[ "$SKIP_JUMP" == "0" && "$ENABLE_JUMP_DETECTION" == "1" ]]; then
   else
     JUMP_OUT="$OUT_DIR/jump_detection"
 
+    MIN_SPEED_KMH=""
+    if [[ -n "${MAX_SPEED_MPS:-}" ]]; then
+      MIN_SPEED_KMH=$(awk -v v="$MAX_SPEED_MPS" 'BEGIN { printf "%.6f", v * 3.6 }')
+    fi
+
     CMD=(bash "$JUMP_DETECT" --data-dir "$DATA_DIR" --out-dir "$JUMP_OUT" --procs "$PROCS")
     [[ -n "$FROM" ]] && CMD+=(--from "$FROM")
     [[ -n "$TO" ]] && CMD+=(--to "$TO")
     [[ "$FORCE" == "1" ]] && CMD+=(--force)
+    [[ -n "$MIN_SPEED_KMH" ]] && CMD+=(--min-speed "$MIN_SPEED_KMH")
 
     echo "  命令: ${CMD[*]}"
+    if [[ -n "$MIN_SPEED_KMH" ]]; then
+      echo "  ⚙️  跳变速度阈值同步 MAX_SPEED_MPS=${MAX_SPEED_MPS} → ${MIN_SPEED_KMH} km/h"
+    fi
     "${CMD[@]}" || { echo "  ❌ 跳变检测失败"; exit 1; }
     echo "  ✅ 跳变检测完成：$JUMP_OUT"
   fi

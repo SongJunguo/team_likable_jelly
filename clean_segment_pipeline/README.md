@@ -31,7 +31,9 @@ clean_segment_pipeline/
 │
 ├── run_staged_pipeline.sh      # 【模式1】分阶段运行（便于调试）
 ├── run_fast_pipeline.sh        # 【模式2】一口气运行（快速，机械硬盘友好）
-└── run_fast_pipeline_parallel.sh       # 新版（轨迹级并行）⭐
+├── run_fast_pipeline_parallel.sh       # 新版（轨迹级并行）⭐
+├── run_remove_jump_trajectories.sh     # 基于 jump_events_all 的异常航迹清理
+└── remove_jump_trajectories.py         # 实际执行多进程过滤的脚本
 │
 ├── 01_filter_clean.sh          # 阶段1：过滤
 ├── 02_split_by_time.sh         # 阶段2：切分
@@ -123,6 +125,26 @@ bash 03_interpolate_segments.sh --date 2022-01-01
 bash 04_quality_check.sh  # 检查最终结果
 ```
 
+### 按报告删除跳变航迹（原地覆盖写回）
+
+质量检查阶段会在 `reports/quality_check_clean__PCA_v4_manual/jump_detection/jump_events_all.csv` 中记录所有疑似跳变。可以使用新增的一键脚本根据该列表直接删除对应航迹，避免重新跑全量流程：
+
+```bash
+cd clean_segment_pipeline
+
+# 先试跑（dry-run），仅统计将被删除的航迹数量
+bash run_remove_jump_trajectories.sh --dry-run --processes 16 --limit 2
+
+# 真正执行：会逐个 parquet 原地过滤，并写临时文件 + os.replace
+bash run_remove_jump_trajectories.sh --processes 24 --verbose
+```
+
+脚本说明：
+- 默认激活 `opensky` conda 环境，可通过 `CONDA_ENV` 环境变量覆盖。
+- 自动读取 `config.sh` 中的 `INTERPOLATED_DIR` 作为数据目录，也可以通过 `--data-dir` 指定其他目录（例如某次试验输出）。
+- 支持 `--limit`、`--day-file` 等调试参数，可在 700GB 机械盘环境下按文件粒度顺序写回，避免额外目录和重复 I/O。
+- 如果想先审查具体航迹，可结合 `--dry-run --verbose` 查看每个 parquet 内删除的行数。
+
 ## ⚙️ 参数配置
 
 编辑 `config.sh`：
@@ -198,6 +220,7 @@ bash 04_quality_check.sh --skip-nan
 #   ENABLE_JUMP_DETECTION=0
 #   ENABLE_NAN_CHECK=0
 ```
+- 跳变检测会自动读取 `MAX_SPEED_MPS` 并换算成 km/h 传给 `run_detect_jumps_all.sh --min-speed`，确保质量检查阶段的速度阈值与过滤阶段一致。
 
 ### 输出报告
 

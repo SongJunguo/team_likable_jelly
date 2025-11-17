@@ -45,14 +45,13 @@ python test_python/analysis/latlon_static_alt_change_stats.py \
 
 ## 单航班过滤 + Raw/Filter 出图
 
-脚本：`test_python/analysis/run_single_flight_plot.sh`。用于快速验证某条航班在指定策略（如 `clean_segment_interp`）下的过滤效果，自动输出 Raw vs Filter PDF，同时打印过滤前/后有效点数、保留比例及按类别（位置 / 高度 / 速度）统计的“失效原因”，并默认保存过滤结果 Parquet。
+脚本：`clean_segment_pipeline/run_single_flight_plot.sh`。用于快速验证某条航班在指定策略（由 `clean_segment_pipeline/config.sh` 中的 `FILTER_STRATEGY` 决定，例如 `clean_segment_interp`）下的过滤效果，自动输出 Raw vs Filter PDF，同时打印过滤前/后有效点数、保留比例及按类别（位置 / 高度 / 速度）统计的“失效原因”，并默认保存过滤结果 Parquet。
 
 ### 基本用法
 
 ```
-source clean_segment_pipeline/config.sh      # 复用流水线的过滤阈值
 conda activate opensky
-bash test_python/analysis/run_single_flight_plot.sh 2022-01-01 248750611 clean_segment_interp
+bash clean_segment_pipeline/run_single_flight_plot.sh 2022-01-01 248750611
 ```
 
 - PDF 默认输出到 `reports/single_flight/plot_<date>_<flight>_<strategy>.pdf`。
@@ -67,10 +66,12 @@ bash test_python/analysis/run_single_flight_plot.sh 2022-01-01 248750611 clean_s
 
 ```
 OUT_PARQUET_DIR=reports/single_flight/parquet \
-  bash test_python/analysis/run_single_flight_plot.sh 2022-01-01 248750611 clean_segment_interp
+  bash clean_segment_pipeline/run_single_flight_plot.sh 2022-01-01 248750611
 ```
 
 - `OUT_PARQUET_DIR` 用于覆盖默认目录（默认与 PDF 相同）。
 - 若暂时不需要保存过滤结果，可在运行前设置 `SAVE_PARQUET=0`。
 - `OUT_METRICS_PDF` 可自定义速度/加速度 PDF 路径；不设定时与轨迹 PDF 放在同一目录、文件名自动带 `_metrics`。
 - 底层由 `filter_and_plot_single_flight.py --out-parquet/--metrics-pdf` 实现，也可直接调用该脚本并手动指定输出路径；Parquet 输出在原始列的基础上追加 Filter/Raw 两套 `*_speed_mps`、`*_accel_mps2`，速度/加速度计算严格遵循 `FilterMaxSpeedSkipNaNWithVoting` 的跨 NaN 水平逻辑，便于对照过滤策略。
+
+> 若需测试不同过滤策略，请修改 `clean_segment_pipeline/config.sh` 中的 `FILTER_STRATEGY`（或在运行命令前临时导出新的 `FILTER_STRATEGY=xxx`）。脚本会自动加载并使用该配置，无需额外传参。

@@ -19,6 +19,7 @@ DRYRUN=0
 LIMIT=0
 VERBOSE=0
 LOG_FILE=""
+MIN_SPEED=""
 
 usage() {
   cat <<EOF
@@ -29,6 +30,7 @@ usage() {
   --from YYYY-MM-DD    起始日期（默认: $DATE_FROM）
   --to   YYYY-MM-DD    截止日期（默认: $DATE_TO）
   --limit N            仅处理前 N 个文件（调试用，默认0=全部）
+  --min-speed KMH      速度阈值（km/h），覆盖 detect_perfect_jumps.py 的默认 1500
   --force              已存在输出也重算
   --verbose            输出更详细日志
   --log-file PATH      重定向日志文件（默认写到 out-dir/detect_perfect_jumps.log）
@@ -45,6 +47,7 @@ while [[ $# -gt 0 ]]; do
     --from) DATE_FROM="$2"; shift 2;;
     --to) DATE_TO="$2"; shift 2;;
     --limit) LIMIT="$2"; shift 2;;
+    --min-speed) MIN_SPEED="$2"; shift 2;;
     --force) FORCE=1; shift;;
     --verbose) VERBOSE=1; shift;;
     --log-file) LOG_FILE="$2"; shift 2;;
@@ -64,6 +67,7 @@ CMD=("python" "$PY_DETECT" --data-dir "$DATA_DIR" --out-dir "$OUT_DIR" --procs "
 [[ "$FORCE" == "1" ]] && CMD+=(--force)
 [[ "$VERBOSE" == "1" ]] && CMD+=(--verbose)
 [[ -n "$LOG_FILE" ]] && CMD+=(--log-file "$LOG_FILE")
+[[ -n "$MIN_SPEED" ]] && CMD+=(--min-speed "$MIN_SPEED")
 
 if [[ "$DRYRUN" == "1" ]]; then
   echo "DRYRUN:" "${CMD[@]}"
