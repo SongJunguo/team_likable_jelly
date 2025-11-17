@@ -37,6 +37,7 @@ usage() {
   --skip-split        跳过切分阶段
   --skip-interp       跳过插值阶段
   --skip-quality      跳过质量检查
+  --skip-stats        跳过 raw vs filtered 点数统计
   --force             覆盖已存在文件
   --dry-run           仅打印命令
   --limit N           仅处理前N个文件（测试用）
@@ -64,6 +65,7 @@ SKIP_FILTER=0
 SKIP_SPLIT=0
 SKIP_INTERP=0
 SKIP_QUALITY=0
+SKIP_STATS=0
 FORCE=0
 DRYRUN=0
 LIMIT=0
@@ -86,6 +88,7 @@ while [[ $# -gt 0 ]]; do
     --skip-split) SKIP_SPLIT=1; shift;;
     --skip-interp) SKIP_INTERP=1; shift;;
     --skip-quality) SKIP_QUALITY=1; shift;;
+    --skip-stats) SKIP_STATS=1; shift;;
     --force) FORCE=1; shift;;
     --dry-run) DRYRUN=1; shift;;
     --limit) LIMIT="$2"; shift 2;;
@@ -212,6 +215,34 @@ if [[ "$SKIP_QUALITY" == "0" ]]; then
   echo ""
 else
   echo "↪︎ 跳过阶段4：质量检查"
+  echo ""
+fi
+
+# ========== 阶段5：raw vs filtered 点数与缺失率汇总 ==========
+# 说明：
+#   - 通过 run_raw_filtered_point_stats.sh 统计 filtered 覆盖日期的 raw 点数，
+#     并对 filtered / segmented / interpolated 的点数占比与经纬高缺失率做对比。
+#   - 生成 CSV + summary txt，方便写入质量报告。
+if [[ "$SKIP_STATS" == "0" && "${ENABLE_POINT_STATS:-1}" == "1" ]]; then
+  echo "=========================================="
+  echo "  [5/5] raw vs filtered 点数对比"
+  echo "=========================================="
+  echo ""
+
+  STATS_CMD=(bash "$SCRIPT_DIR/run_raw_filtered_point_stats.sh")
+
+  # 按当前日期范围限制 raw/filtered 的统计范围
+  STATS_CMD+=(FROM="$FROM" TO="$TO")
+
+  if [[ "$DRYRUN" == "1" ]]; then
+    echo "DRYRUN: ${STATS_CMD[*]}"
+  else
+    "${STATS_CMD[@]}" || { echo "❌ 点数统计失败"; exit 1; }
+  fi
+
+  echo ""
+else
+  echo "↪︎ 跳过阶段5：raw vs filtered 点数统计"
   echo ""
 fi
 

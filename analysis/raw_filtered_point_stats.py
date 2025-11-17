@@ -121,8 +121,29 @@ def _analyze_file(args: Tuple[Path, Tuple[str, ...]]) -> FileSummary:
     )
 
 
-def _collect_dataset_stats(directory: Path, max_workers: Optional[int]) -> Tuple[DatasetStats, List[FileSummary]]:
+def _within_range(file_name: str, date_from: Optional[str], date_to: Optional[str]) -> bool:
+    if date_from is None and date_to is None:
+        return True
+    stem = file_name.split(".")[0]
+    if date_from and stem < date_from:
+        return False
+    if date_to and stem > date_to:
+        return False
+    return True
+
+
+def _collect_dataset_stats(
+    directory: Path,
+    max_workers: Optional[int],
+    allowed_files: Optional[Sequence[str]] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+) -> Tuple[DatasetStats, List[FileSummary]]:
     files = _iter_parquet_files(directory)
+    if allowed_files is not None:
+        allowed_set = set(allowed_files)
+        files = [f for f in files if f.name in allowed_set]
+    files = [f for f in files if _within_range(f.name, date_from, date_to)]
     if not files:
         raise FileNotFoundError(f"No parquet files found in: {directory}")
 
@@ -193,6 +214,33 @@ def _build_dataset_report_text(result: DatasetResult) -> str:
         count = stats.nan_counts[col]
         lines.append(f"{col:<10}: {count:,} rows ({_format_percent(count, stats.total_points)})")
     lines.append(f"{'any_nan':<10}: {stats.any_nan:,} rows ({_format_percent(stats.any_nan, stats.total_points)})")
+    return "\n".join(lines)
+
+
+def _build_total_ratio_text(datasets: Sequence[DatasetResult]) -> Optional[str]:
+    if not datasets:
+        return None
+    base_total = None
+    for result in datasets:
+        if result.label == "raw":
+            base_total = result.stats.total_points
+            break
+    if base_total is None:
+        base_total = sum(result.stats.total_points for result in datasets)
+    if base_total == 0:
+        return None
+
+    lines = [
+        "",
+        "Total Points Ratio (normalized to raw dates)",
+        "=" * 60,
+    ]
+    for result in datasets:
+        ratio = result.stats.total_points / base_total * 100 if base_total else 0.0
+        lines.append(
+            f"{result.label:<12}: {result.stats.total_points:>15,} pts ({ratio:.3f}%)"
+        )
+    lines.append("=" * 60)
     return "\n".join(lines)
 
 
@@ -290,6 +338,8 @@ def parse_args() -> argparse.Namespace:
         help="输出 CSV（含各目录汇总与逐文件缺失率）",
     )
     parser.add_argument("--summary-txt", type=Path, default=None, help="输出整体汇总的 txt")
+    parser.add_argument("--from-date", type=str, default=None, help="限定统计起始日期（含）")
+    parser.add_argument("--to-date", type=str, default=None, help="限定统计截止日期（含）")
     parser.add_argument("--skip-raw", action="store_true", help="跳过 raw 目录")
     parser.add_argument("--skip-filtered", action="store_true", help="跳过 filtered 目录")
     parser.add_argument("--skip-segmented", action="store_true", help="跳过 segmented 目录")
@@ -298,27 +348,61 @@ def parse_args() -> argparse.Namespace:
 
 
 def _gather_datasets(args: argparse.Namespace) -> List[DatasetResult]:
-    dataset_specs: List[Tuple[str, Optional[Path], bool]] = [
-        ("raw", args.raw_dir, args.skip_raw),
-        ("filtered", args.filtered_dir, args.skip_filtered),
-        ("segmented", args.segment_dir, args.skip_segmented),
-        ("interpolated", args.interpolated_dir, args.skip_interpolated),
-    ]
-    results: List[DatasetResult] = []
-    for label, path, skipped in dataset_specs:
-        if skipped or path is None:
+    dataset_info = {
+        "raw": (args.raw_dir, args.skip_raw),
+        "filtered": (args.filtered_dir, args.skip_filtered),
+        "segmented": (args.segment_dir, args.skip_segmented),
+        "interpolated": (args.interpolated_dir, args.skip_interpolated),
+    }
+    order = ["raw", "filtered", "segmented", "interpolated"]
+
+    results: Dict[str, DatasetResult] = {}
+    allowed_files: Optional[List[str]] = None
+
+    # collect filtered first to determine date coverage
+    filtered_path, filtered_skip = dataset_info["filtered"]
+    if not filtered_skip and filtered_path is not None:
+        path = Path(filtered_path)
+        if path.exists():
+            try:
+                stats, files = _collect_dataset_stats(
+                    path,
+                    args.max_workers,
+                    date_from=args.from_date,
+                    date_to=args.to_date,
+                )
+                results["filtered"] = DatasetResult("filtered", path, stats, files)
+                allowed_files = [f.file_name for f in files]
+            except FileNotFoundError as exc:
+                print(f"[WARN] Skip filtered: {exc}")
+        else:
+            print(f"[WARN] Skip filtered: {path} 不存在")
+
+    for label in order:
+        if label == "filtered" and "filtered" in results:
             continue
-        path = Path(path)
-        if not path.exists():
-            print(f"[WARN] Skip {label}: {path} 不存在")
+        path, skip_flag = dataset_info[label]
+        if skip_flag or path is None:
             continue
+        path_obj = Path(path)
+        if not path_obj.exists():
+            print(f"[WARN] Skip {label}: {path_obj} 不存在")
+            continue
+        file_filter = allowed_files if (allowed_files and label == "raw") else None
         try:
-            stats, files = _collect_dataset_stats(path, args.max_workers)
+            stats, files = _collect_dataset_stats(
+                path_obj,
+                args.max_workers,
+                file_filter,
+                args.from_date,
+                args.to_date,
+            )
         except FileNotFoundError as exc:
             print(f"[WARN] Skip {label}: {exc}")
             continue
-        results.append(DatasetResult(label=label, path=path, stats=stats, files=files))
-    return results
+        results[label] = DatasetResult(label=label, path=path_obj, stats=stats, files=files)
+
+    return [results[label] for label in order if label in results]
 
 
 def main() -> None:
@@ -333,6 +417,11 @@ def main() -> None:
         comparison_text = _build_point_comparison_text(dataset_map["raw"].stats, dataset_map["filtered"].stats)
         print(comparison_text)
         summary_lines.append(comparison_text)
+
+    ratio_text = _build_total_ratio_text(datasets)
+    if ratio_text:
+        print(ratio_text)
+        summary_lines.append(ratio_text)
 
     for result in datasets:
         report_text = _build_dataset_report_text(result)

@@ -147,3 +147,28 @@ python test_python/test_data_wrangler_env.py
 ---
 
 **结论**: ✅ data_wrangler 环境已完全就绪，可作为主要数据处理环境使用！
+
+---
+
+## 九、新环境记录：opensky_py312（2025-02-14）
+
+- **目的**：在不破坏 `opensky` 现有依赖的前提下，验证 Python 3.12 + 最新 `traffic`（依赖 NumPy 2.x）的兼容性，后续可为管线升级做准备。
+- **创建命令**：
+  ```bash
+  conda create -n opensky_py312 python=3.12 pip setuptools wheel
+  conda activate opensky_py312
+  ```
+- **安装 traffic**：直接从 PyPI 安装耗时过长，会触发超时；先在任意可联网环境预下载依赖（示例：`pip download traffic==2.13 -d /tmp/traffic_pkg`），再在目标环境执行
+  ```bash
+  python -m pip install --no-index --find-links /tmp/traffic_pkg traffic
+  ```
+  这样可以稳定获得 `traffic 2.13`、`numpy 2.3.4`、`pandas 2.3.3`、`geopandas 1.1.1` 等新版依赖。
+- **验证命令**：
+  ```bash
+  conda activate opensky_py312
+  python -c "import traffic, numpy; print('traffic:', traffic.__version__); print('numpy:', numpy.__version__)"
+  ```
+  当前输出：`traffic: 2.13`，`numpy: 2.3.4`。
+- **注意事项**：
+  - 该环境暂时仅用于功能验证，生产脚本仍以 `opensky` 或 `data_wrangler` 为准。
+  - 如需在其他机器复现，请重新执行一次 `pip download`，并更新本页记录，保持依赖可追踪。

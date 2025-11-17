@@ -1,5 +1,8 @@
 #!/bin/bash
-# 一键执行 raw vs filtered 点数对比
+# 一键执行 raw vs filtered 点数对比（包含 segmented/interpolated 比率）
+# 环境变量：
+#   ENABLE_RAW / ENABLE_FILTERED / ENABLE_SEGMENTED / ENABLE_INTERPOLATED 控制统计目录
+#   DATE_FROM_OVERRIDE / DATE_TO_OVERRIDE 限制统计日期范围（默认跟随 staged pipeline 的 FROM/TO）
 
 set -euo pipefail
 
@@ -7,6 +10,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 source "${SCRIPT_DIR}/config.sh"
+
+if [[ "${ENABLE_POINT_STATS:-1}" != "1" ]]; then
+  echo "ENABLE_POINT_STATS=0，跳过点数统计"
+  exit 0
+fi
 
 RAW_DIR="${RAW_DIR:-}"
 FILTERED_DIR="${FILTERED_DIR:-}"
@@ -17,6 +25,8 @@ ENABLE_RAW="${ENABLE_RAW:-1}"
 ENABLE_FILTERED="${ENABLE_FILTERED:-1}"
 ENABLE_SEGMENTED="${ENABLE_SEGMENTED:-1}"
 ENABLE_INTERPOLATED="${ENABLE_INTERPOLATED:-1}"
+DATE_FROM_OVERRIDE="${DATE_FROM_OVERRIDE:-${FROM:-}}"
+DATE_TO_OVERRIDE="${DATE_TO_OVERRIDE:-${TO:-}}"
 OUTPUT_CSV="${OUTPUT_CSV:-${REPORT_DIR}/raw_vs_filtered_point_stats.csv}"
 SUMMARY_TXT="${SUMMARY_TXT:-${REPORT_DIR}/raw_vs_filtered_point_stats_summary.txt}"
 CONDA_ENV="${CONDA_ENV:-opensky}"
@@ -46,6 +56,12 @@ ARGS=(
   --output-csv "${OUTPUT_CSV}"
   --summary-txt "${SUMMARY_TXT}"
 )
+if [[ -n "${DATE_FROM_OVERRIDE}" ]]; then
+  ARGS+=(--from-date "${DATE_FROM_OVERRIDE}")
+fi
+if [[ -n "${DATE_TO_OVERRIDE}" ]]; then
+  ARGS+=(--to-date "${DATE_TO_OVERRIDE}")
+fi
 if [[ "${ENABLE_RAW}" == "1" && -n "${RAW_DIR}" ]]; then
   ARGS+=(--raw-dir "${RAW_DIR}")
 else

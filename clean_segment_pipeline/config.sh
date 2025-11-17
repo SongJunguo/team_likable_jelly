@@ -5,10 +5,11 @@
 export RAW_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories"
 
 # 新流程输出目录（清晰命名）
-export FILTERED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/filtered_clean__PCA_v3"
-export SEGMENTED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_clean__PCA_v3"
-export INTERPOLATED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/interpolated_clean__PCA_v3"
-export REPORT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/reports/quality_check_clean__PCA_v3"
+export FILTERED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/filtered_clean__PCA_v4"
+export SEGMENTED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_clean__PCA_v4"
+export INTERPOLATED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/interpolated_clean__PCA_v4"
+export REPORT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/reports/quality_check_clean__PCA_v4"
+
 
 # ========== 过滤参数 ==========
 export FILTER_STRATEGY="clean_segment_interp"  # 新策略名
@@ -43,7 +44,7 @@ export INTERP_PROCS=24
 export MAX_WORKERS=40 #用于检测raw和filter点数的差异
 # ========== 日期范围 ==========
 export DATE_FROM="2022-01-01"
-export DATE_TO="2022-01-24"
+export DATE_TO="2022-12-31"
 
 # ========== 质量检测参数 ==========
 export QUALITY_CHECK_PROCS=24
@@ -55,6 +56,14 @@ export ENABLE_NAN_CHECK=1        # 1=启用NaN检测, 0=禁用
 # ========== NaN检测配置 ==========
 export NAN_CHECK_COLUMNS="latitude longitude altitude"  # 重点检查经纬高
 export NAN_CHECK_PROCS=24        # NaN检测并行进程数
+
+# ========== 点数统计选项（用于 run_raw_filtered_point_stats.sh） ==========
+# 可根据需要关闭某些目录的统计。例如仅比较 raw vs filtered 时可将 ENABLE_SEGMENTED=0 ENABLE_INTERPOLATED=0。
+export ENABLE_POINT_STATS=1
+export ENABLE_RAW=1
+export ENABLE_FILTERED=1
+export ENABLE_SEGMENTED=1
+export ENABLE_INTERPOLATED=1
 
 # ========== 内部变量（不要修改） ==========
 export REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
