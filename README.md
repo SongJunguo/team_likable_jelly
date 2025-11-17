@@ -95,17 +95,28 @@ First setup your environment using the `environment.yml` file and edit the varia
 ```
 make download && make cleantrajectories && make features && make submissions
 ```
+
+## Code Layout（2025-11）
+
+- `pipelines/clean_segment/`：Clean-Segment-Interpolate 全流程，包含 `run_fast_pipeline*.sh`、`filter_trajs.py`、`interpolate.py` 等主力脚本；
+- `pipelines/features/`：`feature_*` 脚本与相关依赖，全部使用 `python -m pipelines.features.<name>`。
+- `pipelines/training/`：`features.py`、`regression.py`、`average_prediction.py`、`polynomial.py` 等训练/调参脚本。
+- `tools/cli/`：通用 CLI（机场转换、METAR 下载、时间修正等），命令格式 `python -m tools.cli.<name>`。
+- `tools/common/` 与 `tools/io/`：共享工具 (`utils.py`) 与读写封装 (`readers.py`)。
+- `legacy/analysis_for_interpolation/`：2025Q3 之前的“高质量名单 + 再生成 + 合并”旧流程，已停用，仅保留文档与脚本备查；对应所有报告/CSV 已移至 `reports/legacy_clean_segment_2025Q3/`。
+
+> 详细设计/调用示例见 `docs/ARCHITECTURE.md`。
 # Technical Aspects
 In this Section you will find technical aspects and motivations for the code in this repository.
 ## Filtering and Smoothing Trajectories
 Informations about the aircraft weight are somehow "hidden" in the kinematics of the aircraft. In order to have a good fine-grain vision of these kinematics, we need to filter and smooth the raw trajectories first.
-### Filtering Trajectory (`filter_trajs.py`,`filterclassic.py`)
+### Filtering Trajectory (`pipelines/clean_segment/filter_trajs.py`,`pipelines/legacy_classic/filterclassic.py`)
 First, we try to remove measurements that are repeated from one time step to the next when no updated measurements are available. As we don't know which ones are repeated, we compute a proxy criteria by considering which variables are said to be updated together in [ADS-B](https://mode-s.org/decode/content/quickstart.html). If these variables have the same values from one measurement to the next, they are most likely repeated information. To remove erroneous measurements, we coded our own version of the `FilterDerivative` found in the [Traffic](https://github.com/xoolive/traffic) library. We took care of not interpolating data at all. In fact we even discarded "isolated" points, points which are spaced more than 20 seconds from any other point.
 
-### Smoothing Trajectory (`interpolate.py`)
+### Smoothing Trajectory (`pipelines/clean_segment/interpolate.py`)
 Smoothing is done using cubic smoothing splines of the [csaps](https://csaps.readthedocs.io/en/latest/) library. We avoid interpolating where there are not enough points. More specifically, we will not interpolate between two points spaced by more than 20 seconds.
 ## Building Features
-### Correcting DateTimes (`correct_date.py`)
+### Correcting DateTimes (`tools/cli/correct_date.py`)
 When looking at trajectories, the `arrival_time` variable is not
 always correct. It is the same for the departure. To solve this issue,
 we look at points of the trajectory in a 10 NM radius of the departure

@@ -18,14 +18,14 @@
    - **推荐学习时间**：30-45分钟
 
 2. **[02_入口模块详解.md](./02_入口模块详解.md)**
-   - filter_trajs.py 源码解析
+   - pipelines/clean_segment/filter_trajs.py 源码解析
    - 核心函数详解
    - 数据流转示意图
    - 关键设计决策和常见问题
    - **推荐学习时间**：45-60分钟
 
 3. **[03_过滤器模块详解.md](./03_过滤器模块详解.md)**
-   - filterclassic.py 源码深度解析
+   - pipelines/legacy_classic/filterclassic.py 源码深度解析
    - 5个过滤器的详细实现
    - 导数阈值和投票机制
    - 参数调优指南
@@ -160,7 +160,7 @@ data = pd.DataFrame({
 
 ### 单文件过滤
 ```bash
-python filter_trajs.py \
+python -m pipelines.clean_segment.filter_trajs \
     -t_in rawtrajectories/2022-01-01.parquet \
     -t_out filtered_trajectories/2022-01-01.parquet \
     -strategy classic
@@ -261,9 +261,9 @@ df = (
 - [CLAUDE.md](../../.claude/CLAUDE.md)：项目配置和编程规则
 
 ### 源代码
-- [filter_trajs.py](../../filter_trajs.py)：主入口脚本
-- [filterclassic.py](../../filterclassic.py)：过滤器实现
-- [interpolate.py](../../interpolate.py)：后续插值流程
+- [pipelines/clean_segment/filter_trajs.py](../../pipelines/clean_segment/filter_trajs.py)：主入口脚本
+- [pipelines/legacy_classic/filterclassic.py](../../pipelines/legacy_classic/filterclassic.py)：过滤器实现
+- [pipelines/clean_segment/interpolate.py](../../pipelines/clean_segment/interpolate.py)：后续插值流程
 
 ### 外部资源
 - [traffic库文档](https://traffic-viz.github.io/)：FilterBase 接口说明

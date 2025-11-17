@@ -24,10 +24,10 @@ make submissions       # 训练模型并生成预测结果
 ### 单步执行
 ```bash
 # 过滤轨迹（去重、去异常值）
-python filter_trajs.py
+python -m pipelines.clean_segment.filter_trajs
 
 # 插值轨迹（三次样条）
-python interpolate.py
+python pipelines/clean_segment/interpolate.py
 
 # 特征提取
 python feature_climbing.py      # 爬升特征
@@ -43,14 +43,14 @@ python regression.py --seed 0
 
 ### 数据处理流程
 ```
-原始轨迹 → 过滤(filter_trajs.py) → 插值(interpolate.py) → 特征提取(feature_*.py) → 模型训练(regression.py) → 预测结果
+原始轨迹 → 过滤(pipelines/clean_segment/filter_trajs.py) → 插值(pipelines/clean_segment/interpolate.py) → 特征提取(feature_*.py) → 模型训练(regression.py) → 预测结果
 ```
 
 ### 关键模块
 
 1. **轨迹预处理**
-   - `filter_trajs.py` + `filterclassic.py`: 去除重复数据和异常值，使用FilterDerivative和FilterIsolated
-   - `interpolate.py`: 三次样条插值（基于csaps库），20秒以上间隔不插值
+   - `pipelines/clean_segment/filter_trajs.py` + `pipelines/legacy_classic/filterclassic.py`: 去除重复数据和异常值，使用FilterDerivative和FilterIsolated
+   - `pipelines/clean_segment/interpolate.py`: 三次样条插值（基于csaps库），20秒以上间隔不插值
 
 2. **特征提取**
    - `feature_climbing.py`: 按48个高度切片（每1000英尺）提取爬升性能特征（ROCD、能量率、估算质量等）

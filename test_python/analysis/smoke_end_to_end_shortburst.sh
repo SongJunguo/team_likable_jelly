@@ -25,7 +25,7 @@ PLOT_POSTCLEAN_DIR="reports/postclean_plots"
 mkdir -p "$FILT_DIR" "$SEG_V3_DIR" "$PLOT_FILTER_DIR" "$PLOT_POSTCLEAN_DIR"
 
 echo "[1/3] Filtering (classic_shortburst + ShortBurst): $DATE"
-python filter_trajs.py \
+python -m pipelines.clean_segment.filter_trajs \
   -t_in  "$RAW_DIR/${DATE}.parquet" \
   -t_out "$FILT_DIR/${DATE}.parquet" \
   -strategy classic_shortburst
@@ -40,7 +40,7 @@ python test_python/analysis/plot_flight_before_after_filter.py \
   --out-pdf  "$OUT1"
 
 echo "[3/3] Post-clean segmented_v2 → segmented_v3 (and plot before/after)"
-python junguo_analysis_for_opensky2022/analysis_for_interpolation/post_segment_short_burst_clean.py \
+python legacy/analysis_for_interpolation/post_segment_short_burst_clean.py \
   --input-dir "$SEG_V2_DIR" \
   --output-dir "$SEG_V3_DIR" \
   --from "$DATE" --to "$DATE" \

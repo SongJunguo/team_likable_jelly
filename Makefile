@@ -111,34 +111,34 @@ features: $(CRUISES) $(MASSES) $(WINDS) $(WEATHERS) $(THUNDERS)
 submissions:
 	mkdir -p $(SUBMISSIONS_FOLDER)
 	for number in $(shell seq 0 19); do \
-		python3 regression.py -what submit -random_state $$number; \
+		python3 -m pipelines.training.regression -what submit -random_state $$number; \
 	done;
-	python3 average_prediction.py -istop 10 -out_csv $(SUBMISSIONS_FOLDER)/averaged_10.csv
-	python3 average_prediction.py -istop 20 -out_csv $(SUBMISSIONS_FOLDER)/averaged_20.csv
+	python3 -m pipelines.training.average_prediction -istop 10 -out_csv $(SUBMISSIONS_FOLDER)/averaged_10.csv
+	python3 -m pipelines.training.average_prediction -istop 20 -out_csv $(SUBMISSIONS_FOLDER)/averaged_20.csv
 
 
 
 
 # 宏：为单日轨迹计算爬升相关特征（质量、能率等）
 define feature_climbing
-	python3 feature_climbing.py -is_climb -t_in $< -f_in $(FOLDER_FLGT)/$(patsubst $(FOLDER_MASS)/%/$(@F),%,$@).parquet -f_out $@ -periods $(CLMB_PERIODS) -thresh_dt $(CLMB_THRESHOLD_DT) -threshold_vr $(CLMB_THRESHOLD_VR) -cthrust $(CLMB_CTHRUST) -vrate_var $(CLMB_VRATE_VAR) -altstep $(CLMB_ALT_STEP)  -altstart $(CLMB_ALT_START) -airports $(AIRPORTS)
+	python3 -m pipelines.features.feature_climbing -is_climb -t_in $< -f_in $(FOLDER_FLGT)/$(patsubst $(FOLDER_MASS)/%/$(@F),%,$@).parquet -f_out $@ -periods $(CLMB_PERIODS) -thresh_dt $(CLMB_THRESHOLD_DT) -threshold_vr $(CLMB_THRESHOLD_VR) -cthrust $(CLMB_CTHRUST) -vrate_var $(CLMB_VRATE_VAR) -altstep $(CLMB_ALT_STEP)  -altstart $(CLMB_ALT_START) -airports $(AIRPORTS)
 endef
 
 # 宏：为单日轨迹计算巡航阶段信息特征
 define feature_cruise
-	python3 feature_cruise_infos.py -t_in $< -f_in $(FOLDER_FLGT)/$(patsubst $(FOLDER_CRUISE)/%/$(@F),%,$@).parquet  -f_out $@ -airports $(AIRPORTS) -nsplit $(CRUISE_NSPLIT)
+	python3 -m pipelines.features.feature_cruise_infos -t_in $< -f_in $(FOLDER_FLGT)/$(patsubst $(FOLDER_CRUISE)/%/$(@F),%,$@).parquet  -f_out $@ -airports $(AIRPORTS) -nsplit $(CRUISE_NSPLIT)
 endef
 
 # 宏：沿轨迹计算风效应特征
 define feature_wind
-	python3 feature_wind_effect.py -t_in $< -f_in $(FOLDER_FLGT)/$(patsubst $(FOLDER_WIND)/%/$(@F),%,$@).parquet  -f_out $@ -airports $(AIRPORTS)
+	python3 -m pipelines.features.feature_wind_effect -t_in $< -f_in $(FOLDER_FLGT)/$(patsubst $(FOLDER_WIND)/%/$(@F),%,$@).parquet  -f_out $@ -airports $(AIRPORTS)
 endef
 
 
 # 依据航班列表过滤机场并补充时区，生成 airports_tz.parquet
 $(AIRPORTS): $(FLIGHTS)
 #	curl -o $(FOLDER_DATA)/airports.csv https://github.com/davidmegginson/ourairports-data/blob/main/airports.csv
-	python3 airports_to_parquet.py -a_in ourairports2024-10-21.csv -a_out $@  -flights "$(FLIGHTS)"
+	python3 -m tools.cli.airports_to_parquet -a_in ourairports2024-10-21.csv -a_out $@  -flights "$(FLIGHTS)"
 
 
 # 下载预制的 METAR parquet（更可复现实验）；如需从头生成，见下方注释
@@ -148,19 +148,19 @@ $(METARS): $(AIRPORTS)
 	# result might be different as mesonet's files might have been updated
 	# I've experienced one station's location update in a 2 weeks timespan
 	# mkdir -p $(FOLDER_DATA)/METARs
-	# python3 download_metars.py
-	# python3 metars_folder_to_parquet.py -metars_folder_in $(FOLDER_DATA)/METARs -metars_parquet_out $@
+	# python3 -m tools.cli.download_metars
+	# python3 -m tools.cli.metars_folder_to_parquet -metars_folder_in $(FOLDER_DATA)/METARs -metars_parquet_out $@
 
 # 航班级天气特征（来自 METAR）
 $(FOLDER_WEATHER)/%.parquet: $(FOLDER_FLGT)/%.parquet $(AIRPORTS) $(METARS)
 	@mkdir -p $(@D)
-	python3 feature_weather_from_metars.py -f_in $< -airports $(AIRPORTS) -metars $(METARS) -f_out $@ -geo_scale 1 -hour_scale 1
+	python3 -m pipelines.features.feature_weather_from_metars -f_in $< -airports $(AIRPORTS) -metars $(METARS) -f_out $@ -geo_scale 1 -hour_scale 1
 
 
 # 航班级雷暴指示特征（来自 METAR）
 $(FOLDER_THUNDER)/%.parquet: $(FOLDER_FLGT)/%.parquet $(AIRPORTS) $(METARS)
 	@mkdir -p $(@D)
-	python3 feature_thunder_from_metars.py -f_in $< -airports $(AIRPORTS) -metars $(METARS) -f_out $@ -geo_scale 1 -hour_scale 1
+	python3 -m pipelines.features.feature_thunder_from_metars -f_in $< -airports $(AIRPORTS) -metars $(METARS) -f_out $@ -geo_scale 1 -hour_scale 1
 
 # 生成航班 parquet：优先使用 EXISTING_DATA 中的 CSV；若无则尝试现成 parquet；否则转换
 $(FOLDER_FLGT)/%.parquet:
@@ -172,7 +172,7 @@ $(FOLDER_FLGT)/%.parquet:
 		cp "$(EXISTING_DATA)/flights/$(basename $(@F)).parquet" "$@"; \
 		exit 0; \
 	fi
-	python3 flights_to_parquet.py -f_in $(@:.parquet=.csv) -f_out $@
+	python3 -m tools.cli.flights_to_parquet -f_in $(@:.parquet=.csv) -f_out $@
 
 # 复制原始日轨迹 parquet（来自 EXISTING_DATA）
 $(FOLDER_RAW)/%.parquet:
@@ -189,12 +189,12 @@ $(FOLDER_RAW)/%.parquet:
 # 过滤重复/未更新/突刺/孤立点（仅置 NaN，不插值）
 $(FOLDER_FILT)/%.parquet: $(FOLDER_RAW)/%.parquet
 	@mkdir -p $(@D)
-	python3 filter_trajs.py -t_in $< -t_out $@ -strategy classic
+	python3 -m pipelines.clean_segment.filter_trajs -t_in $< -t_out $@ -strategy classic
 
 # 平滑并做“限洞插值”（仅填充 <= 20s 的空洞）
 $(FOLDER_INT)/%.parquet: $(FOLDER_FILT)/%.parquet
 	@mkdir -p $(@D)
-	python3 interpolate.py -t_in $< -t_out $@ -smooth $(INTERPOL_SMOOTH)
+	python3 -m pipelines.clean_segment.interpolate -t_in $< -t_out $@ -smooth $(INTERPOL_SMOOTH)
 
 # 单日爬升质量相关特征（final_submission_set）
 $(FOLDER_MASS)/final_submission_set/%.parquet: $(FOLDER_INT)/%.parquet  $(AIRPORTS)

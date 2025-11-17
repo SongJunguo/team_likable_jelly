@@ -60,9 +60,9 @@
 - 为什么你观察到 “缺失 ~33%”：
   - 这是“插值版轨迹”的统计，不是原始数据的问题。插值/平滑流程对超过阈值（默认 >20s）的时间裂缝整段掩蔽为 NaN；而 TAS 依赖多列（groundspeed、track、u、v），任一缺失会导致 TAS 缺失，放大 NaN 比例。
   - 证据：
-    - 插值变量清单包含 `tasx/tasy/tas`：`interpolate.py:62`
-    - 平滑与分组阈值：`interpolate.py:67,69-70`（风和速度类用较小平滑系数；温湿度单列平滑）
-    - 位置/高度缺失时同时掩蔽天气：`filter_trajs.py:28-30`
+    - 插值变量清单包含 `tasx/tasy/tas`：`pipelines/clean_segment/interpolate.py:62`
+    - 平滑与分组阈值：`pipelines/clean_segment/interpolate.py:67,69-70`（风和速度类用较小平滑系数；温湿度单列平滑）
+    - 位置/高度缺失时同时掩蔽天气：`pipelines/clean_segment/filter_trajs.py:28-30`
 - 原始数据的 TAS 缺失率：原始 parquet 不直接包含 TAS（三者是派生量）。若在“原始点”逐点计算，只有当输入列（groundspeed/track 或 u/v）缺失时才会缺失。你在报告中统计的原始缺失（groundspeed/track/vertical_rate 约 0.28%）已很低，风场列原始通常也较完整，因此“原始逐点计算的 TAS 缺失率”应远低于插值版的 ~33%。
 
 ---
@@ -77,7 +77,7 @@
   - `wind_effect = dot(wind, groundspeed)/|groundspeed|`，见 `feature_wind_effect.py:16`
   - `mach = tas→mach(altitude)`，见 `feature_cruise_infos.py:17`
 - 数据源选择：
-  - 优先使用原始轨迹（rawtrajectories/）。插值版轨迹在本仓库设置下会引入较多 NaN（`interpolate.py` 的断点掩蔽与多列依赖所致）。
+  - 优先使用原始轨迹（rawtrajectories/）。插值版轨迹在本仓库设置下会引入较多 NaN（`pipelines/clean_segment/interpolate.py` 的断点掩蔽与多列依赖所致）。
 
 ---
 
@@ -91,13 +91,13 @@
 - `readers.py:43`
 - `readers.py:45`
 - `readers.py:46`
-- `interpolate.py:62`
-- `interpolate.py:67`
-- `interpolate.py:69`
-- `interpolate.py:70`
-- `filter_trajs.py:28`
-- `filter_trajs.py:29`
-- `filter_trajs.py:30`
+- `pipelines/clean_segment/interpolate.py:62`
+- `pipelines/clean_segment/interpolate.py:67`
+- `pipelines/clean_segment/interpolate.py:69`
+- `pipelines/clean_segment/interpolate.py:70`
+- `pipelines/clean_segment/filter_trajs.py:28`
+- `pipelines/clean_segment/filter_trajs.py:29`
+- `pipelines/clean_segment/filter_trajs.py:30`
 - `feature_wind_effect.py:16`
 - `feature_cruise_infos.py:17`
 

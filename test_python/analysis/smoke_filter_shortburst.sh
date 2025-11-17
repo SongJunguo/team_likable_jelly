@@ -13,7 +13,7 @@ OUT_PDF="reports/filter_shortburst_smoketest/plot_raw_vs_filter_${DATE}_${FID}.p
 mkdir -p "$FILT_DIR" "$(dirname "$OUT_PDF")"
 
 echo "[1/2] Filtering (classic_shortburst w/ ShortBurst): $DATE"
-python filter_trajs.py \
+python -m pipelines.clean_segment.filter_trajs \
   -t_in  "$RAW_DIR/${DATE}.parquet" \
   -t_out "$FILT_DIR/${DATE}.parquet" \
   -strategy classic_shortburst

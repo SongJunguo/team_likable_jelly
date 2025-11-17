@@ -224,12 +224,12 @@ opensky_2024_PRC_dataset/
 
 #### 4. **过滤轨迹** - `classic_filtered_trajectories/`
 - **内容**: 经过去重、异常值过滤、孤立点移除的轨迹数据
-- **生成脚本**: `filter_trajs.py`
+- **生成脚本**: `pipelines/clean_segment/filter_trajs.py`
 - **处理逻辑**: 使用经典过滤策略链处理原始轨迹
 
 #### 5. **插值轨迹** - `classic__1e-2_interpolated_trajectories/`
 - **内容**: 经过三次样条平滑的轨迹数据
-- **生成脚本**: `interpolate.py`
+- **生成脚本**: `pipelines/clean_segment/interpolate.py`
 - **处理逻辑**: 对过滤后轨迹进行平滑处理，仅填充≤20秒的数据空洞
 - **参数含义**: `1e-2` 为三次样条平滑系数
 
@@ -257,9 +257,9 @@ opensky_2024_PRC_dataset/
 ```
 原始轨迹数据 (rawtrajectories/)
     ↓
-过滤处理 (filter_trajs.py)
+过滤处理 (pipelines/clean_segment/filter_trajs.py)
     ↓
-插值平滑 (interpolate.py)
+插值平滑 (pipelines/clean_segment/interpolate.py)
     ↓
 特征提取 (feature_*.py)
     ↓

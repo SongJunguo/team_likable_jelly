@@ -20,8 +20,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from filter_trajs import build_filter_chain, nointerpolate
-from filterclassic import FilterSpatialPCAOutlier
+from pipelines.clean_segment.filter_trajs import build_filter_chain, nointerpolate
+from pipelines.legacy_classic.filterclassic import FilterSpatialPCAOutlier
 from test_python.analysis.plot_flight_before_after_filter import plot_compare
 
 RAW_DEFAULT = "/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories"
