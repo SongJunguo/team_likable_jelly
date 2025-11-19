@@ -26,7 +26,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from pipelines.clean_segment import interpolate
+from pipelines.clean_segment.interpolate import interpolate as interpolate_fn
 from tools.io import readers as readers_module
 
 DEFAULT_MAX_HOLE_SIZE = 20
@@ -41,7 +41,7 @@ def interpolate_segment_wrapper(df: pd.DataFrame, smooth: float, max_hole_size: 
         return df
 
     # 直接调用interpolate.py的interpolate函数
-    result = interpolate(df, smooth, max_hole_size=max_hole_size)
+    result = interpolate_fn(df, smooth, max_hole_size=max_hole_size)
 
     # 转换track_unwrapped为track（原interpolate()输出track_unwrapped）
     if "track_unwrapped" in result.columns:

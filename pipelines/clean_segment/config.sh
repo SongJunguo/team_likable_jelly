@@ -5,10 +5,10 @@
 export RAW_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories"
 
 # 新流程输出目录（清晰命名）
-export FILTERED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/filtered_clean__PCA_v4"
-export SEGMENTED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_clean__PCA_v4"
-export INTERPOLATED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/interpolated_clean__PCA_v4"
-export REPORT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/reports/quality_check_clean__PCA_v4"
+export FILTERED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/filtered_clean__PCA_v5"
+export SEGMENTED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_clean__PCA_v5"
+export INTERPOLATED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/interpolated_clean__PCA_v5"
+export REPORT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/reports/quality_check_clean__PCA_v5"
 
 
 # ========== 过滤参数 ==========
@@ -44,7 +44,7 @@ export INTERP_PROCS=24
 export MAX_WORKERS=40 #用于检测raw和filter点数的差异
 # ========== 日期范围 ==========
 export DATE_FROM="2022-01-01"
-export DATE_TO="2022-12-31"
+export DATE_TO="2022-01-12"
 
 # ========== 质量检测参数 ==========
 export QUALITY_CHECK_PROCS=24
