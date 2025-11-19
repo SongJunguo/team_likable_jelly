@@ -11,8 +11,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/config.sh"
 
 # 引用原有的跳变检测脚本
-JUMP_DETECT="$REPO_ROOT/legacy/analysis_for_interpolation/run_detect_jumps_all.sh"
-NAN_CHECK="$REPO_ROOT/legacy/analysis_for_interpolation/check_nan_values.py"
+JUMP_DETECT="$REPO_ROOT/pipelines/clean_segment/run_detect_jumps_all.sh"
+NAN_CHECK="$REPO_ROOT/pipelines/clean_segment/check_nan_values.py"
 
 usage() {
   cat <<'EOF'

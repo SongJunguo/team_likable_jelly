@@ -66,5 +66,6 @@ export ENABLE_SEGMENTED=1
 export ENABLE_INTERPOLATED=1
 
 # ========== 内部变量（不要修改） ==========
-export REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export SCRIPT_DIR="$SCRIPT_PATH"
+export REPO_ROOT="$(cd "$SCRIPT_PATH/../.." && pwd)"

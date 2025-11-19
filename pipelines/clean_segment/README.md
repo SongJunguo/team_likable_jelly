@@ -47,8 +47,8 @@ pipelines/clean_segment/
     └── batch_utils.sh          # 批量处理工具
 
 # 复用分析工具（不在本目录）
-# - legacy/analysis_for_interpolation/check_nan_values.py  # NaN并行检测
-# - legacy/analysis_for_interpolation/run_detect_jumps_all.sh  # 跳变检测
+# - pipelines/clean_segment/check_nan_values.py  # NaN并行检测
+# - pipelines/clean_segment/run_detect_jumps_all.sh  # 跳变检测
 ```
 
 ## ⚡ 并行策略速览

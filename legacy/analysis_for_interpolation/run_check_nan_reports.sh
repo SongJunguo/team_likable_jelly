@@ -74,7 +74,7 @@ REPORT_FILE="${REPORT_DIR}/nan_check_${REPORT_BASENAME}_${TIMESTAMP}.txt"
 
 cd "$PROJECT_ROOT"
 PY_CMD=(
-  python legacy/analysis_for_interpolation/check_nan_values.py
+  python pipelines/clean_segment/check_nan_values.py
   --input-dir "$TARGET_DIR"
   --output "$REPORT_FILE"
   --suffixes .parquet .csv

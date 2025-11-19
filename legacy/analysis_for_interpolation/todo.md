@@ -37,7 +37,7 @@ FilterMaxSpeedSkipNaN是没有三点投票法的，是直接删除所有的异�
 
 # 第三次提问回答
 classic_dp可以删除了，没有用，不好用
-legacy/analysis_for_interpolation/run_detect_jumps_all.sh这个功能很重要，我用这个检查最后的生产的轨迹有没有异常点，这个怎么在新的目录里面安排？是移动过去？还是单纯引用？
+pipelines/clean_segment/run_detect_jumps_all.sh这个功能很重要，我用这个检查最后的生产的轨迹有没有异常点，这个怎么在新的目录里面安排？是移动过去？还是单纯引用？
 新增strategy="todo_strict"换个更贴切的名字吧
 FilterMaxSpeedSkipNaNWithVoting对于超速度的是当前两个点各投一票，超加速度的才是三个点前点、当前点、后点各加票，你没搞错吧？
   export FILTERED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/filtered_todo_strict_v1"
@@ -62,7 +62,7 @@ FilterMaxSpeedSkipNaNWithVoting对于超速度的是当前两个点各投一票�
 MyFilterDerivative 在计算导数前会排除 NaN 并基于真实时间间隔（timestamp 列的 dt.total_seconds()）做不等间隔处理，同时对航迹角做 np.unwrap，这些处理在跨 NaN 的速度/加速度版本中也要同步，避免时间跨度、角度跳变带来的假报警。
 “跨 NaN” 的速度需要明确是“忽略中间所有 NaN、直接连接最近的两个有效点”，那加速度就只能在至少三个有效点都存在的区间上计算；实现时要保证索引在这些条件不满足时不会访问越界。
 由于 FilterMaxSpeedSkipNaNWithVoting 主要面向 latitude/longitude（或地速）而不是单一列，记得像 MyFilterDerivative 一样先在每列内部构建自己的 nanmask，不要跨列混用。
-legacy/analysis_for_interpolation/check_nan_values.py是不是能检测nan数量，里面代码有没有问题？
+pipelines/clean_segment/check_nan_values.py是不是能检测nan数量，里面代码有没有问题？
 
 
 # 第五次问答
@@ -124,7 +124,7 @@ legacy/analysis_for_interpolation/check_nan_values.py是不是能检测nan数量
   nan检测你可以应该汇报经纬高有没有缺失，，没有的话，给出一个总体的指标而不是每个文件单独给，看起费劲、\
   legacy/analysis_for_interpolation
   legacy/analysis_for_interpolation/All_trajectory_NaN_analysis.py
-  legacy/analysis_for_interpolation/check_nan_values.py\
+  pipelines/clean_segment/check_nan_values.py\
   你看看这两个nan检测功能更好吗？
 
   # 第八次提问
