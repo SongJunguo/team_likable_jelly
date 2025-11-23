@@ -7,7 +7,7 @@
 | 目录 | 作用 | 示例入口 |
 | --- | --- | --- |
 | `pipelines/clean_segment/` | Clean-Segment-Interpolate 全流程（含 shell 阶段脚本、`filter_trajs`、`interpolate`、批处理工具等） | `python -m pipelines.clean_segment.filter_trajs ...`、`bash pipelines/clean_segment/run_fast_pipeline.sh ...` |
-| `pipelines/legacy_classic/` | 历史过滤策略与 `filterclassic.py`，供兼容/参考 | `python -m pipelines.legacy_classic.filterclassic --help` |
+| `pipelines/classic_filters/` | 历史过滤策略与 `filterclassic.py`，供兼容/参考 | `python -m pipelines.classic_filters.filterclassic --help` |
 | `pipelines/features/` | 特征工程脚本（`feature_climbing`,`feature_weather_from_metars` 等） | `python -m pipelines.features.feature_climbing ...` |
 | `pipelines/training/` | 特征装载、训练、调参、平均提交脚本 | `python -m pipelines.training.regression ...` |
 | `tools/cli/` | 通用 CLI 工具（数据导入、机场/时间修正、METAR 下载等） | `python -m tools.cli.airports_to_parquet ...` |

@@ -1,7 +1,7 @@
 """轨迹过滤主脚本。
 
 命令入口：``python -m pipelines.clean_segment.filter_trajs -t_in <raw> -t_out <filtered> -strategy classic``。
-脚本读取原始 parquet 轨迹文件，按照策略拼接多个滤波器（参见 :mod:`pipelines.legacy_classic.filterclassic`），
+脚本读取原始 parquet 轨迹文件，按照策略拼接多个滤波器（参见 :mod:`pipelines.classic_filters.filterclassic`），
 以 ``strategy=nointerpolate`` 的方式仅对异常观测置 NaN，不做任何插值。
 """
 
@@ -15,7 +15,7 @@ from typing import Callable, Optional
 import pandas as pd
 import numpy as np
 from tools.common import utils
-from pipelines.legacy_classic.filterclassic import (
+from pipelines.classic_filters.filterclassic import (
     FilterCstLatLon,
     FilterCstPosition,
     FilterCstSpeed,

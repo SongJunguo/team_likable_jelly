@@ -31,7 +31,7 @@
 | Path | Modified | Status | Notes |
 | --- | --- | --- | --- |
 | `pipelines/clean_segment/` | 2025-11-17 | Active | 原 `clean_segment_pipeline/` 全量迁入此包，含 shell + Python + utils |
-| `pipelines/legacy_classic/` | 2025-11-14 | Active | 经典过滤器 `filterclassic.py`、老旧策略在此隔离 |
+| `pipelines/classic_filters/` | 2025-11-14 | Active | 经典过滤器 `filterclassic.py`、老旧策略在此隔离 |
 | `pipelines/features/` | 2025-11-15 | Active | 所有特征工程脚本（`feature_*`）集中于此 |
 | `pipelines/training/` | 2025-11-15 | Active | 特征装载、回归、超参脚本（`features.py`,`regression.py`,`optimparam.py`...） |
 | `tools/cli/` | 2025-11-17 | Active | 所有 CLI 脚本（`airports_to_parquet.py`,`add_localtime.py` 等） |

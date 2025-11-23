@@ -26,7 +26,7 @@ junguo_analysis_for_interpolation
 legacy/analysis_for_interpolation
 legacy/analysis_for_interpolation/todo.md
 pipelines/clean_segment/filter_trajs.py
-pipelines/legacy_classic/filterclassic.py
+pipelines/classic_filters/filterclassic.py
 
 
 FilterMaxSpeedSkipNaN是没有三点投票法的，是直接删除所有的异常点，投票可以参考MyFilterDerivative？

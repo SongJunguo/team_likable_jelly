@@ -25,7 +25,7 @@
    - **推荐学习时间**：45-60分钟
 
 3. **[03_过滤器模块详解.md](./03_过滤器模块详解.md)**
-   - pipelines/legacy_classic/filterclassic.py 源码深度解析
+   - pipelines/classic_filters/filterclassic.py 源码深度解析
    - 5个过滤器的详细实现
    - 导数阈值和投票机制
    - 参数调优指南
@@ -262,7 +262,7 @@ df = (
 
 ### 源代码
 - [pipelines/clean_segment/filter_trajs.py](../../pipelines/clean_segment/filter_trajs.py)：主入口脚本
-- [pipelines/legacy_classic/filterclassic.py](../../pipelines/legacy_classic/filterclassic.py)：过滤器实现
+- [pipelines/classic_filters/filterclassic.py](../../pipelines/classic_filters/filterclassic.py)：过滤器实现
 - [pipelines/clean_segment/interpolate.py](../../pipelines/clean_segment/interpolate.py)：后续插值流程
 
 ### 外部资源
