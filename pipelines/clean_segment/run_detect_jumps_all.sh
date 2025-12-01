@@ -8,8 +8,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PY_DETECT="$REPO_ROOT/analysis/detect_perfect_jumps.py"
 
-# DATA_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_trajs_doublepass_loop_lim20s_inside_v7_test1hz"
-DATA_DIR="/tmp"
+DATA_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/interpolated_clean__PCA_v5"
+# DATA_DIR="/tmp"
 OUT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/reports/test_interpolated_2022-01-01"
 PROCS=41
 DATE_FROM="2022-01-01"
