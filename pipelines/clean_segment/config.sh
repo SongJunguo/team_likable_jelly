@@ -5,10 +5,10 @@
 export RAW_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories"
 
 # 新流程输出目录（清晰命名）
-export FILTERED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/filtered_clean__PCA_v5"
-export SEGMENTED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_clean__PCA_v5"
-export INTERPOLATED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/interpolated_clean__PCA_v5"
-export REPORT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/reports/quality_check_clean__PCA_v5"
+export FILTERED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/filtered_clean__PCA_v4"
+export SEGMENTED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_clean__PCA_v4"
+export INTERPOLATED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/interpolated_clean__PCA_v4"
+export REPORT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/reports/quality_check_clean__PCA_v4"
 
 
 # ========== 过滤参数 ==========

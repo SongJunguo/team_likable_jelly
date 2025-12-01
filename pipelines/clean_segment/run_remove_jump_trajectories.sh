@@ -18,7 +18,7 @@ else
 fi
 
 PYTHON_SCRIPT="${SCRIPT_DIR}/remove_jump_trajectories.py"
-DEFAULT_CSV="${REPO_ROOT}/reports/quality_check_clean__PCA_v4_manual/jump_detection/jump_events_all.csv"
+DEFAULT_CSV="${REPO_ROOT}reports/quality_check_clean__PCA_v4/jump_detection/jump_events_all.csv"
 DEFAULT_DATA_DIR="${INTERPOLATED_DIR}" # 来源于 config.sh，可覆盖
 if [[ -z "${DEFAULT_DATA_DIR}" ]]; then
   echo "INTERPOLATED_DIR 未设置，请先在 config.sh 中配置" >&2
