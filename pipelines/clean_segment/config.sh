@@ -1,14 +1,19 @@
 #!/bin/bash
 # 统一配置文件 - Clean-Segment-Interpolate 流程
 
+# ========== 内部变量（不要修改） ==========
+SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export SCRIPT_DIR="$SCRIPT_PATH"
+export REPO_ROOT="$(cd "$SCRIPT_PATH/../.." && pwd)"
+
 # ========== 目录配置 ==========
-export RAW_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories"
+export RAW_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/rawtrajectories"
 
 # 新流程输出目录（清晰命名）
-export FILTERED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/filtered_clean__PCA_v4"
-export SEGMENTED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/segmented_clean__PCA_v4"
-export INTERPOLATED_DIR="/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/interpolated_clean__PCA_v4"
-export REPORT_DIR="/workspace/aircraft_trajectory/team_likable_jelly/reports/quality_check_clean__PCA_v4"
+export FILTERED_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/filtered_clean__PCA_v6"
+export SEGMENTED_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/segmented_clean__PCA_v6"
+export INTERPOLATED_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/interpolated_clean__PCA_v6"
+export REPORT_DIR="${REPO_ROOT}/reports/quality_check_clean__PCA_v6"
 
 
 # ========== 过滤参数 ==========
@@ -44,7 +49,7 @@ export INTERP_PROCS=24
 export MAX_WORKERS=40 #用于检测raw和filter点数的差异
 # ========== 日期范围 ==========
 export DATE_FROM="2022-01-01"
-export DATE_TO="2022-01-12"
+export DATE_TO="2022-01-07"
 
 # ========== 质量检测参数 ==========
 export QUALITY_CHECK_PROCS=24
@@ -64,8 +69,3 @@ export ENABLE_RAW=1
 export ENABLE_FILTERED=1
 export ENABLE_SEGMENTED=1
 export ENABLE_INTERPOLATED=1
-
-# ========== 内部变量（不要修改） ==========
-SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export SCRIPT_DIR="$SCRIPT_PATH"
-export REPO_ROOT="$(cd "$SCRIPT_PATH/../.." && pwd)"
