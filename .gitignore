@@ -1,5 +1,9 @@
 
 
+# 设备特定的规则文件（不同步，每台设备维护自己的版本）
+.github/copilot-instructions.md
+AGENTS.md
+
 *.parquet
 *.csv
 
