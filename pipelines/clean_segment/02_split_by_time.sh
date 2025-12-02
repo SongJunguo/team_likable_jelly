@@ -142,7 +142,7 @@ split_one() {
     return 0
   fi
 
-  /opt/miniconda3/envs/opensky/bin/python "$PY_SPLIT" \
+  python "$PY_SPLIT" \
     -t_in "$in_f" \
     -t_out "$out_f" \
     --max-dt "$MAX_DT_VAL" \

@@ -162,7 +162,7 @@ run_one_fast() {
     return 0
   fi
 
-  /opt/miniconda3/envs/opensky/bin/python "$PY_FAST" \
+   "$PY_FAST" \
     -t_in "$in_f" \
     -t_out "$out_f" \
     -strategy "$FILTER_STRATEGY" \

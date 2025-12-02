@@ -128,7 +128,7 @@ filter_one() {
     return 0
   fi
 
-  /opt/miniconda3/envs/opensky/bin/python -m pipelines.clean_segment.filter_trajs \
+  python -m pipelines.clean_segment.filter_trajs \
     -t_in "$in_f" \
     -t_out "$out_f" \
     -strategy "$FILTER_STRATEGY" \

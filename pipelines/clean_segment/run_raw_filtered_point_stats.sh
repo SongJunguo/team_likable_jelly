@@ -29,18 +29,8 @@ DATE_FROM_OVERRIDE="${DATE_FROM_OVERRIDE:-${FROM:-}}"
 DATE_TO_OVERRIDE="${DATE_TO_OVERRIDE:-${TO:-}}"
 OUTPUT_CSV="${OUTPUT_CSV:-${REPORT_DIR}/raw_vs_filtered_point_stats.csv}"
 SUMMARY_TXT="${SUMMARY_TXT:-${REPORT_DIR}/raw_vs_filtered_point_stats_summary.txt}"
-CONDA_ENV="${CONDA_ENV:-opensky}"
 
 mkdir -p "${REPORT_DIR}"
-
-if command -v conda >/dev/null 2>&1; then
-  # shellcheck disable=SC1091
-  eval "$("conda" "shell.bash" "hook")"
-  conda activate "${CONDA_ENV}"
-else
-  echo "conda 命令不存在，请先安装并配置 conda 环境" >&2
-  exit 1
-fi
 
 PYTHON_SCRIPT="${REPO_ROOT}/analysis/raw_filtered_point_stats.py"
 
@@ -50,7 +40,6 @@ echo "    Filtered  : ${FILTERED_DIR:-<未提供>}"
 echo "    Segmented : ${SEGMENTED_DIR:-<未提供>}"
 echo "    Interp    : ${INTERPOLATED_DIR:-<未提供>}"
 echo "    Output CSV: ${OUTPUT_CSV}"
-echo "    Conda Env : ${CONDA_ENV}"
 
 ARGS=(
   --output-csv "${OUTPUT_CSV}"

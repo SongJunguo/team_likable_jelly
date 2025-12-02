@@ -142,7 +142,7 @@ interp_one() {
     return 0
   fi
 
-  /opt/miniconda3/envs/opensky/bin/python "$PY_INTERP" \
+  python "$PY_INTERP" \
     -t_in "$in_f" \
     -t_out "$out_f" \
     -smooth "$SMOOTH_VAL" \

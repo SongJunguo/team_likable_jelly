@@ -186,7 +186,7 @@ process_one_file() {
     local out_f="$OUT/interpolated_${d}.parquet"
     local log="$OUT/.logs/${d}.log"
 
-    if /opt/miniconda3/envs/opensky/bin/python "$PY_FAST" \
+    if python "$PY_FAST" \
         -t_in "$in_f" \
         -t_out "$out_f" \
         -strategy "$FILTER_STRATEGY" \
