@@ -16,12 +16,12 @@
    - 测试用途的Python文件放在 `test_python/` 目录下，可以在`test_python/`目录下创建更进一步的子目录，区分不同目的测试文件，必要可以加上markdown文件说明。
 
 ### 数据路径
-7. **清洗好的数据位置**：`/workspace/aircraft_trajectory/team_likable_jelly/perfect_trajectories`
+7. **清洗好的数据位置**：`team_likable_jelly/perfect_trajectories`
    - 格式：Parquet，365个文件
    - 说明：这是raw数据的一个子集，并非全部轨迹数据
-   - 原始数据和清洗的中间数据目录：`/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset`
-   - 原始数据在 `/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories`
-   - 过滤了，未插值，有很多缺失点的数据（nan值）在  `/workspace/aircraft_trajectory/team_likable_jelly/opensky_2024_PRC_dataset/classic_filtered_trajectories`
+   - 原始数据和清洗的中间数据目录：`team_likable_jelly/opensky_2024_PRC_dataset`
+   - 原始数据在 `team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories`
+   - 过滤了，未插值，有很多缺失点的数据（nan值）在  `team_likable_jelly/opensky_2024_PRC_dataset/classic_filtered_trajectories`
 
 ### 开发流程
 9. **文档更新**：更新代码后，必须更新对应的markdown文件，保持更改的可追踪性和可记忆性
