@@ -51,22 +51,22 @@ fi
 if [[ -n "${DATE_TO_OVERRIDE}" ]]; then
   ARGS+=(--to-date "${DATE_TO_OVERRIDE}")
 fi
-if [[ "${ENABLE_RAW}" == "1" && -n "${RAW_DIR}" ]]; then
+if [[ "${ENABLE_RAW}" == "1" && -n "${RAW_DIR}" && -d "${RAW_DIR}" ]]; then
   ARGS+=(--raw-dir "${RAW_DIR}")
 else
   ARGS+=(--skip-raw)
 fi
-if [[ "${ENABLE_FILTERED}" == "1" && -n "${FILTERED_DIR}" ]]; then
+if [[ "${ENABLE_FILTERED}" == "1" && -n "${FILTERED_DIR}" && -d "${FILTERED_DIR}" ]]; then
   ARGS+=(--filtered-dir "${FILTERED_DIR}")
 else
   ARGS+=(--skip-filtered)
 fi
-if [[ "${ENABLE_SEGMENTED}" == "1" && -n "${SEGMENTED_DIR}" ]]; then
+if [[ "${ENABLE_SEGMENTED}" == "1" && -n "${SEGMENTED_DIR}" && -d "${SEGMENTED_DIR}" ]]; then
   ARGS+=(--segment-dir "${SEGMENTED_DIR}")
 else
   ARGS+=(--skip-segmented)
 fi
-if [[ "${ENABLE_INTERPOLATED}" == "1" && -n "${INTERPOLATED_DIR}" ]]; then
+if [[ "${ENABLE_INTERPOLATED}" == "1" && -n "${INTERPOLATED_DIR}" && -d "${INTERPOLATED_DIR}" ]]; then
   ARGS+=(--interpolated-dir "${INTERPOLATED_DIR}")
 else
   ARGS+=(--skip-interpolated)

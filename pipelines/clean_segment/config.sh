@@ -43,16 +43,16 @@ export SMOOTH=1e-2              # csaps平滑系数
 # 注意：segment内部通过切分控制Δt≤MAX_DT，插值阶段再按MAX_HOLE_SIZE限制缺口
 
 # ========== 并发配置 ==========
-export FILTER_PROCS=24
-export SPLIT_PROCS=24
-export INTERP_PROCS=24
-export MAX_WORKERS=40 #用于检测raw和filter点数的差异
+export FILTER_PROCS=4
+export SPLIT_PROCS=4
+export INTERP_PROCS=4
+export MAX_WORKERS=4 #用于检测raw和filter点数的差异
 # ========== 日期范围 ==========
 export DATE_FROM="2022-01-01"
-export DATE_TO="2022-01-07"
+export DATE_TO="2022-01-31"
 
 # ========== 质量检测参数 ==========
-export QUALITY_CHECK_PROCS=24
+export QUALITY_CHECK_PROCS=4
 
 # ========== 质量检测开关 ==========
 export ENABLE_JUMP_DETECTION=1   # 1=启用跳变检测, 0=禁用
@@ -60,7 +60,7 @@ export ENABLE_NAN_CHECK=1        # 1=启用NaN检测, 0=禁用
 
 # ========== NaN检测配置 ==========
 export NAN_CHECK_COLUMNS="latitude longitude altitude"  # 重点检查经纬高
-export NAN_CHECK_PROCS=24        # NaN检测并行进程数
+export NAN_CHECK_PROCS=4        # NaN检测并行进程数
 
 # ========== 点数统计选项（用于 run_raw_filtered_point_stats.sh） ==========
 # 可根据需要关闭某些目录的统计。例如仅比较 raw vs filtered 时可将 ENABLE_SEGMENTED=0 ENABLE_INTERPOLATED=0。

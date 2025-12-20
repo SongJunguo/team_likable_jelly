@@ -1,24 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ========== 环境检查 ==========
-# 确保在正确的conda环境中运行
-if [[ -z "${CONDA_DEFAULT_ENV:-}" || "$CONDA_DEFAULT_ENV" != "opensky" ]]; then
-  echo "⚠️  警告：未检测到opensky环境"
-  echo "   请先激活环境：conda activate opensky"
-  echo "   或者脚本会尝试自动激活..."
-
-  # 尝试自动激活
-  if command -v conda &>/dev/null; then
-    eval "$(conda shell.bash hook)"
-    conda activate opensky || { echo "❌ 激活opensky环境失败"; exit 1; }
-    echo "✅ 已自动激活opensky环境"
-  else
-    echo "❌ 找不到conda命令"
-    exit 1
-  fi
-fi
-
 # ========== 快速模式主流程 ==========
 # 一口气处理：过滤 → 切分 → 插值（数据在内存中流转）
 #
@@ -51,6 +33,10 @@ usage() {
   --to DATE           截止日期 YYYY-MM-DD（默认: $DATE_TO）
   --procs N           并发数（默认: $INTERP_PROCS）
   --smooth VAL        插值平滑系数（默认: $SMOOTH）
+  --with-quality      完成后自动运行质量检查（默认开启）
+  --no-quality        禁用质量检查
+  --with-stats        完成后自动跑 raw/filter/segment/interp 点数统计（默认开启，缺目录自动跳过）
+  --no-stats          禁用点数统计
   --force             覆盖已存在文件
   --dry-run           仅打印命令
   --limit N           仅处理前N个文件（测试用）
@@ -74,6 +60,8 @@ PROCS="${INTERP_PROCS}"
 FROM="${DATE_FROM}"
 TO="${DATE_TO}"
 SMOOTH_VAL="${SMOOTH}"
+WITH_QUALITY=1
+WITH_STATS=1
 FORCE=0
 DRYRUN=0
 LIMIT=0
@@ -86,6 +74,10 @@ while [[ $# -gt 0 ]]; do
     --to) TO="$2"; shift 2;;
     --procs) PROCS="$2"; shift 2;;
     --smooth) SMOOTH_VAL="$2"; shift 2;;
+    --with-quality) WITH_QUALITY=1; shift;;
+    --no-quality) WITH_QUALITY=0; shift;;
+    --with-stats) WITH_STATS=1; shift;;
+    --no-stats) WITH_STATS=0; shift;;
     --force) FORCE=1; shift;;
     --dry-run) DRYRUN=1; shift;;
     --limit) LIMIT="$2"; shift 2;;
@@ -191,6 +183,33 @@ echo "  ✅ 快速模式完成"
 echo "=========================================="
 echo "输出目录: $OUT"
 echo "日志目录: $OUT/.logs"
-echo ""
-echo "下一步："
-echo "  bash 04_quality_check.sh  # 质量检查"
+
+# ========== 可选：质量检查 ==========
+if [[ "$WITH_QUALITY" == "1" ]]; then
+  echo ""
+  echo "=========================================="
+  echo "  ▶️  质量检查"
+  echo "=========================================="
+  QC_PROCS="${QUALITY_CHECK_PROCS:-$PROCS}"
+  QC_CMD=(bash "$SCRIPT_DIR/04_quality_check.sh" --data-dir "$OUT" --from "$FROM" --to "$TO" --procs "$QC_PROCS")
+  if [[ "$DRYRUN" == "1" ]]; then
+    echo "DRYRUN: ${QC_CMD[*]}"
+  else
+    "${QC_CMD[@]}"
+  fi
+fi
+
+# ========== 可选：点数与缺失率统计 ==========
+if [[ "$WITH_STATS" == "1" && "${ENABLE_POINT_STATS:-1}" == "1" ]]; then
+  echo ""
+  echo "=========================================="
+  echo "  ▶️  raw vs filtered 点数统计"
+  echo "=========================================="
+  STATS_CMD=(bash "$SCRIPT_DIR/run_raw_filtered_point_stats.sh")
+  STATS_CMD+=(FROM="$FROM" TO="$TO" RAW_DIR="$RAW" INTERPOLATED_DIR="$OUT")
+  if [[ "$DRYRUN" == "1" ]]; then
+    echo "DRYRUN: ${STATS_CMD[*]}"
+  else
+    "${STATS_CMD[@]}"
+  fi
+fi

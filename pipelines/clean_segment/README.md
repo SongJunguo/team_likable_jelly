@@ -65,6 +65,8 @@ pipelines/clean_segment/
 
 ## 🚀 使用方法
 
+> 运行前请先手动 `conda activate opensky`（脚本不再自动激活环境）。
+
 ### 快速开始（推荐）
 
 #### 方式1：轨迹级并行（单日测试推荐）
@@ -93,11 +95,15 @@ bash run_fast_pipeline.sh --from 2022-01-01 --to 2022-01-10
 
 # 全量运行
 bash run_fast_pipeline.sh
+
+# 如需关闭自动质量检查 / 点数统计
+bash run_fast_pipeline.sh --no-quality --no-stats
 ```
 
 **特点**：
 - ✅ 文件级并行：同时处理多个parquet文件
 - ✅ 全量运行时效率高（365个文件并行）
+- ⚙️  默认跑完自动执行质量检查与点数统计（缺少 filtered/segmented 目录时自动跳过对应统计项）
 - ⚠️  单日测试时无法并行（只有1个文件）
 
 **如何选择**：
