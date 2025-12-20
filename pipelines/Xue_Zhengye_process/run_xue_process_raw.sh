@@ -9,7 +9,7 @@ OUT_DIR_DEFAULT="$REPO_ROOT/opensky_2024_PRC_dataset/xue_processed_raw__v1"
 FLIGHTS_PARQUET_DEFAULT="$REPO_ROOT/opensky_2024_PRC_dataset/flights/challenge_set.parquet"
 AIRPORTS_PARQUET_DEFAULT="$REPO_ROOT/opensky_2024_PRC_dataset/airports_tz.parquet"
 
-PROCS_DEFAULT=14
+PROCS_DEFAULT=28
 
 usage() {
   cat <<EOF
@@ -40,8 +40,8 @@ EOF
 
 RAW_DIR="$RAW_DIR_DEFAULT"
 OUT_DIR="$OUT_DIR_DEFAULT"
-FROM=""
-TO=""
+FROM="2022-01-01"
+TO="2022-02-31"
 PROCS="$PROCS_DEFAULT"
 FORCE=0
 DRYRUN=0

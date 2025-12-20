@@ -8,10 +8,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PY_DETECT="$REPO_ROOT/analysis/detect_perfect_jumps.py"
 
-DATA_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/interpolated_clean__PCA_v6"
-# DATA_DIR="/tmp"
-OUT_DIR="${REPO_ROOT}/reports/test_interpolated_2022-01-01"
-PROCS=41
+DATA_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/xue_processed_raw__v1"
+# DATA_DIR="/tmp" 
+OUT_DIR="${REPO_ROOT}/reports/xue_processed_raw__v1"
+PROCS=28
 DATE_FROM="2022-01-01"
 DATE_TO="2022-12-31"
 FORCE=0

@@ -12,6 +12,7 @@
 
 - 按天落盘：`opensky_2024_PRC_dataset/xue_processed_raw__v1/xue_<date>.parquet`
 - 字段（默认）：`timestamp, flight_id, latitude, longitude, altitude, TAS, track, adep, ades, aircraft_type, adep_latitude_deg, adep_longitude_deg, ades_latitude_deg, ades_longitude_deg`
+- 点数/大小统计：默认写入 `reports/xue_processed_raw__v1/xue_process_point_stats.csv`（按天 raw/out 点数与比例 + raw/out parquet 文件大小(GB)与比例 + 总计汇总）
 
 ## 运行
 
@@ -26,4 +27,3 @@ bash pipelines/Xue_Zhengye_process/run_xue_process_raw.sh --from 2022-01-01 --to
 ```bash
 bash pipelines/Xue_Zhengye_process/run_xue_process_raw.sh --from 2022-01-01 --to 2022-01-01 --limit-flights 10
 ```
-

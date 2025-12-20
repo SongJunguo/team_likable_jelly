@@ -5,6 +5,7 @@ import argparse
 import logging
 import os
 import uuid
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -37,7 +38,23 @@ FINAL_COLUMNS = [
 ]
 
 
+@dataclass(frozen=True)
+class DayPointStats:
+    day: str
+    raw_rows: int | None
+    out_rows: int | None
+    raw_gb: float | None
+    out_gb: float | None
+    ratio_out_raw: float | None
+    ratio_out_raw_size: float | None
+    status: str
+    message: str
+
+
 def parse_args() -> argparse.Namespace:
+    repo_root = Path(__file__).resolve().parents[2]
+    default_stats_csv = repo_root / "reports" / "xue_processed_raw__v1" / "xue_process_point_stats.csv"
+
     parser = argparse.ArgumentParser(description="薛正烨方案：rawtrajectories 按天处理 + 合并 challenge_set 元数据")
 
     parser.add_argument(
@@ -67,6 +84,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry_run", action="store_true", help="只打印将处理的文件，不实际处理/写盘")
     parser.add_argument("--limit_days", type=int, default=0, help="仅处理前 N 天（测试用）")
     parser.add_argument("--limit_flights", type=int, default=0, help="每个日文件仅处理前 N 条航迹（测试用）")
+    parser.add_argument(
+        "--stats_csv",
+        default=default_stats_csv.as_posix(),
+        help="点数统计输出 CSV（默认写入 reports/xue_processed_raw__v1/）",
+    )
 
     # 算法参数（沿用 legacy 脚本参数名/含义）
     parser.add_argument("--resample_freq", default="1s", help="重采样频率")
@@ -87,6 +109,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log_level", default="INFO")
 
     return parser.parse_args()
+
+
+def _parquet_num_rows(path: Path) -> int | None:
+    if not path.exists():
+        return None
+    try:
+        return int(pq.ParquetFile(path).metadata.num_rows)
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("读取 parquet 行数失败: %s (%s)", path, exc)
+        return None
+
+
+def _file_size_bytes(path: Path) -> int | None:
+    try:
+        return int(path.stat().st_size) if path.exists() else None
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("读取文件大小失败: %s (%s)", path, exc)
+        return None
+
+
+def _file_size_gb(path: Path) -> float | None:
+    size_bytes = _file_size_bytes(path)
+    if size_bytes is None:
+        return None
+    return float(size_bytes) / 1_000_000_000
 
 
 def _list_day_strings(raw_dir: Path) -> list[str]:
@@ -155,9 +202,9 @@ def _flush_to_parquet(
     writer: pq.ParquetWriter | None,
     tmp_path: Path,
     flights_meta: pd.DataFrame,
-) -> pq.ParquetWriter | None:
+) -> tuple[pq.ParquetWriter | None, int]:
     if not buffer:
-        return writer
+        return writer, 0
 
     chunk = pd.concat(buffer, ignore_index=True)
     chunk["flight_id"] = chunk["flight_id"].astype(np.int64)
@@ -173,7 +220,7 @@ def _flush_to_parquet(
         tmp_path.parent.mkdir(parents=True, exist_ok=True)
         writer = pq.ParquetWriter(tmp_path.as_posix(), table.schema, compression="zstd")
     writer.write_table(table)
-    return writer
+    return writer, int(table.num_rows)
 
 
 def process_one_day(
@@ -182,18 +229,64 @@ def process_one_day(
     out_path: Path,
     flights_meta: pd.DataFrame,
     args: argparse.Namespace,
-) -> None:
+) -> DayPointStats:
+    raw_rows = _parquet_num_rows(in_path)
+    raw_gb = _file_size_gb(in_path)
     if out_path.exists() and not args.force:
         logging.info("↪︎ 跳过已存在: %s", out_path)
-        return
+        out_rows = _parquet_num_rows(out_path)
+        out_gb = _file_size_gb(out_path)
+        ratio_out_raw = (out_rows / raw_rows) if (out_rows is not None and raw_rows) else None
+        ratio_out_raw_size = (out_gb / raw_gb) if (out_gb is not None and raw_gb) else None
+        logging.info(
+            "统计 %s（跳过）: raw_rows=%s, out_rows=%s, out/raw=%s, raw_gb=%s, out_gb=%s, out_gb/raw_gb=%s",
+            day,
+            raw_rows,
+            out_rows,
+            f"{ratio_out_raw:.6f}" if ratio_out_raw is not None else "NA",
+            f"{raw_gb:.6f}" if raw_gb is not None else "NA",
+            f"{out_gb:.6f}" if out_gb is not None else "NA",
+            f"{ratio_out_raw_size:.6f}" if ratio_out_raw_size is not None else "NA",
+        )
+        return DayPointStats(
+            day=day,
+            raw_rows=raw_rows,
+            out_rows=out_rows,
+            raw_gb=raw_gb,
+            out_gb=out_gb,
+            ratio_out_raw=ratio_out_raw,
+            ratio_out_raw_size=ratio_out_raw_size,
+            status="skipped",
+            message="输出已存在，未覆盖",
+        )
 
     if args.dry_run:
         logging.info("DRYRUN: %s -> %s", in_path, out_path)
-        return
+        return DayPointStats(
+            day=day,
+            raw_rows=raw_rows,
+            out_rows=None,
+            raw_gb=raw_gb,
+            out_gb=None,
+            ratio_out_raw=None,
+            ratio_out_raw_size=None,
+            status="dry-run",
+            message="仅打印，不处理/写盘",
+        )
 
     if not in_path.exists():
         logging.warning("缺失日文件：%s", in_path)
-        return
+        return DayPointStats(
+            day=day,
+            raw_rows=None,
+            out_rows=None,
+            raw_gb=None,
+            out_gb=None,
+            ratio_out_raw=None,
+            ratio_out_raw_size=None,
+            status="missing",
+            message="输入日文件缺失",
+        )
 
     logging.info("读取 %s ...", in_path)
     cols = [
@@ -213,11 +306,22 @@ def process_one_day(
 
     challenge_ids = flights_meta.index
     before_rows = len(df)
+    raw_rows = before_rows if raw_rows is None else raw_rows
     df = df[df["flight_id"].isin(challenge_ids)].copy()
     logging.info("challenge_set 过滤：%s -> %s 行", before_rows, len(df))
     if df.empty:
         logging.warning("该日无 challenge_set 航迹：%s", day)
-        return
+        return DayPointStats(
+            day=day,
+            raw_rows=raw_rows,
+            out_rows=0,
+            raw_gb=raw_gb,
+            out_gb=0.0,
+            ratio_out_raw=0.0 if raw_rows else None,
+            ratio_out_raw_size=0.0 if raw_gb else None,
+            status="empty",
+            message="challenge_set 过滤后为空",
+        )
 
     # 内存优化
     f32_cols = [
@@ -254,6 +358,7 @@ def process_one_day(
     writer: pq.ParquetWriter | None = None
     buffer: list[pd.DataFrame] = []
     buffer_rows = 0
+    out_rows = 0
     kept = 0
 
     try:
@@ -266,7 +371,8 @@ def process_one_day(
                 kept += 1
 
                 if buffer_rows >= args.flush_rows:
-                    writer = _flush_to_parquet(buffer, writer, tmp_path, flights_meta)
+                    writer, wrote = _flush_to_parquet(buffer, writer, tmp_path, flights_meta)
+                    out_rows += wrote
                     buffer.clear()
                     buffer_rows = 0
 
@@ -274,18 +380,66 @@ def process_one_day(
                     logging.info("进度: %s/%s（已保留 %s 条）", i, total, kept)
 
         if buffer:
-            writer = _flush_to_parquet(buffer, writer, tmp_path, flights_meta)
+            writer, wrote = _flush_to_parquet(buffer, writer, tmp_path, flights_meta)
+            out_rows += wrote
             buffer.clear()
 
         if writer is None:
             logging.warning("该日没有数据保留下来：%s", day)
-            return
+            ratio_out_raw = (out_rows / raw_rows) if raw_rows else None
+            ratio_out_raw_size = 0.0 if raw_gb else None
+            logging.info(
+                "统计 %s（无输出）: raw_rows=%s, out_rows=%s, out/raw=%s, raw_gb=%s, out_gb=%s, out_gb/raw_gb=%s",
+                day,
+                raw_rows,
+                out_rows,
+                f"{ratio_out_raw:.6f}" if ratio_out_raw is not None else "NA",
+                f"{raw_gb:.6f}" if raw_gb is not None else "NA",
+                "0.000000",
+                f"{ratio_out_raw_size:.6f}" if ratio_out_raw_size is not None else "NA",
+            )
+            return DayPointStats(
+                day=day,
+                raw_rows=raw_rows,
+                out_rows=0,
+                raw_gb=raw_gb,
+                out_gb=0.0,
+                ratio_out_raw=0.0 if raw_rows else None,
+                ratio_out_raw_size=ratio_out_raw_size,
+                status="empty",
+                message="无任何航迹通过过滤/处理",
+            )
 
         writer.close()
         writer = None
         out_path.parent.mkdir(parents=True, exist_ok=True)
         os.replace(tmp_path, out_path)
         logging.info("✅ 完成: %s", out_path)
+
+        out_gb = _file_size_gb(out_path)
+        ratio_out_raw = (out_rows / raw_rows) if raw_rows else None
+        ratio_out_raw_size = (out_gb / raw_gb) if (out_gb is not None and raw_gb) else None
+        logging.info(
+            "统计 %s: raw_rows=%s, out_rows=%s, out/raw=%s, raw_gb=%s, out_gb=%s, out_gb/raw_gb=%s",
+            day,
+            raw_rows,
+            out_rows,
+            f"{ratio_out_raw:.6f}" if ratio_out_raw is not None else "NA",
+            f"{raw_gb:.6f}" if raw_gb is not None else "NA",
+            f"{out_gb:.6f}" if out_gb is not None else "NA",
+            f"{ratio_out_raw_size:.6f}" if ratio_out_raw_size is not None else "NA",
+        )
+        return DayPointStats(
+            day=day,
+            raw_rows=raw_rows,
+            out_rows=out_rows,
+            raw_gb=raw_gb,
+            out_gb=out_gb,
+            ratio_out_raw=ratio_out_raw,
+            ratio_out_raw_size=ratio_out_raw_size,
+            status="processed",
+            message="ok",
+        )
     finally:
         if writer is not None:
             writer.close()
@@ -329,10 +483,39 @@ def main() -> int:
     logging.info("输出目录: %s", out_dir)
 
     start = datetime.now()
+    stats: list[DayPointStats] = []
     for day in days:
         in_path = raw_dir / f"{day}.parquet"
         out_path = out_dir / f"xue_{day}.parquet"
-        process_one_day(day, in_path, out_path, flights_meta, args)
+        stats.append(process_one_day(day, in_path, out_path, flights_meta, args))
+
+    stats_df = pd.DataFrame([asdict(s) for s in stats])
+    if not stats_df.empty:
+        total_raw = stats_df["raw_rows"].dropna().sum()
+        total_out = stats_df["out_rows"].dropna().sum()
+        ratio_out_raw = (total_out / total_raw) if total_raw else None
+
+        total_raw_gb = stats_df["raw_gb"].dropna().sum()
+        total_out_gb = stats_df["out_gb"].dropna().sum()
+        ratio_out_raw_size = (total_out_gb / total_raw_gb) if total_raw_gb else None
+
+        logging.info(
+            "总计点数: raw_rows=%s, out_rows=%s, out/raw=%s",
+            int(total_raw),
+            int(total_out),
+            f"{ratio_out_raw:.6f}" if ratio_out_raw is not None else "NA",
+        )
+        logging.info(
+            "总计文件大小(GB): raw_gb=%s, out_gb=%s, out_gb/raw_gb=%s",
+            f"{total_raw_gb:.6f}",
+            f"{total_out_gb:.6f}",
+            f"{ratio_out_raw_size:.6f}" if ratio_out_raw_size is not None else "NA",
+        )
+
+        stats_csv = Path(args.stats_csv).resolve()
+        stats_csv.parent.mkdir(parents=True, exist_ok=True)
+        stats_df.to_csv(stats_csv, index=False)
+        logging.info("点数统计 CSV 已写入: %s", stats_csv)
 
     logging.info("全部完成，用时: %s", datetime.now() - start)
     return 0
