@@ -36,6 +36,8 @@
 | `temperature` | 环境温度 | K |
 | `specific_humidity` | 比湿 | kg/kg |
 
+注意: altitude 精度为 25ft
+
 ### 2.2 标识字段（注意 `flight_id` 的语义会在切分后变化）
 
 | 字段 | raw / filtered 语义 | segmented / interpolated 语义 |
