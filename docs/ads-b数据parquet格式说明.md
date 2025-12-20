@@ -15,6 +15,7 @@
 - `filtered_clean__PCA_v6/`：过滤后轨迹（异常点置 NaN；不插值）。
 - `segmented_clean__PCA_v6/`：按时间间隔切分后的 segment（去除关键列 NaN 的行）。
 - `interpolated_clean__PCA_v6/`：对每个 segment **重建 1Hz 网格 + 平滑样条 + 限洞插值**后的最终轨迹（本目录）。
+- `xue_processed_raw__v1/`：薛正烨方案对 `rawtrajectories/` 的按天处理产物（`xue_<date>.parquet`，仅保留 challenge_set 航班，并合并 `adep/ades/aircraft_type` 与机场经纬度）。
 
 ---
 
@@ -136,3 +137,23 @@
 - `track_unwrapped -> track` 的回写：`pipelines/clean_segment/interpolate_single_day.py`
 - 派生速度/风特征定义与单位换算：`tools/io/readers.py`
 
+---
+
+## 7. 薛正烨方案按天输出（`xue_processed_raw__v1/`）
+
+该目录由 `pipelines/Xue_Zhengye_process/` 产出，文件命名：`xue_<yyyy-mm-dd>.parquet`。
+
+字段（默认输出）：
+
+| 字段 | 含义 | 单位 |
+|---|---|---|
+| `timestamp` | 轨迹点时间戳（UTC） | `datetime64[ns, UTC]` |
+| `flight_id` | 原始航班 ID（与 raw 一致） | int64 |
+| `latitude`,`longitude` | 经纬度 | ° |
+| `altitude` | 高度 | ft |
+| `track` | 航迹角 | ° |
+| `TAS` | 合成真空速（由地速+风估计） | kt |
+| `adep`,`ades` | 起降机场 ICAO | string |
+| `aircraft_type` | 机型 | string |
+| `adep_latitude_deg`,`adep_longitude_deg` | 起飞机场经纬度（来自 `airports_tz.parquet`） | ° |
+| `ades_latitude_deg`,`ades_longitude_deg` | 到达机场经纬度（来自 `airports_tz.parquet`） | ° |
