@@ -269,3 +269,10 @@ python analysis/plot_adsb_parquet_distributions.py \
   --date-from 2022-01-01 --date-to 2022-01-01 \
   --no-delta-hist
 ```
+
+---
+
+## 9. 航迹完整率与大圆吻合度分析
+
+对应脚本：`analysis/trajectory_coverage/coverage_metrics.py`  
+说明与参数见：`analysis/trajectory_coverage/trajectory_coverage.md`
