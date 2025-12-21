@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 常用命令
 
 ### 环境激活
-- **数据处理**: `conda activate opensky`
+- **数据处理**: `conda activate data` 或`conda activate opensky` data环境的python和包的版本更新，更推荐。
 - **深度学习**: `conda activate Time-MoE`
 
 ### 完整数据处理流程

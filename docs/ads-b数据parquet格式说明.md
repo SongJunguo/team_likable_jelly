@@ -176,9 +176,10 @@
 - `delta_summary.csv`：delta 直方图的 pairs/mean/std 等汇总（仅当开启 delta-hist 且数据中存在 `flight_id/timestamp` 时输出）
 - `hist_y_linear/hist_<col>.png`：每列 1D 直方图（y 轴线性）
 - `hist_y_log/hist_<col>.png`：每列 1D 直方图（y 轴对数）
-- `hist_<col>.png`：线性版（兼容旧路径；通常为指向 `hist_y_linear/` 的链接）
-- `heatmap_lat_lon.png`：`latitude/longitude` 2D 热力图（点密度）
-- `heatmap_lat_lon_mean_altitude.png`：经纬-平均高度热力图（若存在 `altitude` 且未禁用）
+- `heatmap_lat_lon.png`：`latitude/longitude` 2D 热力图（matplotlib 板式：坐标轴/标题/colorbar，默认 LogNorm + viridis，0 计数留白）
+- `heatmap_lat_lon_raw.png`：`latitude/longitude` 2D 热力图（datashader 裸图，用于对比）
+- `heatmap_lat_lon_mean_altitude.png`：经纬-平均高度热力图（matplotlib 板式，colorbar 单位 ft；若存在 `altitude` 且未禁用）
+- `heatmap_lat_lon_mean_altitude_raw.png`：经纬-平均高度热力图（datashader 裸图，用于对比）
 
 ### 8.2 默认 bin / 网格分辨率（可按需用 CLI 参数覆盖）
 
@@ -190,6 +191,7 @@
 - `latitude` / `longitude`（1D）：0.001°
 - `latitude/longitude`（2D heatmap）：0.005°（若像素数过大，会自动增大 step 以满足 `--heatmap-max-cells` 上限）
 - 直方图 y 轴：默认同时输出线性与对数（`--hist-yscales linear,log`）
+- 直方图 PNG DPI：默认 200（`--hist-dpi 200`）
 - 直方图绘图默认 x 轴裁剪（不影响 `hist_counts.csv` 统计本身，可用 `--plot-xlim` 覆盖）：
   - `groundspeed`：[0, 700] kt
   - `altitude`：[-1000, 45000] ft

@@ -15,7 +15,6 @@ import csv
 import json
 import math
 import multiprocessing as mp
-import shutil
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -26,6 +25,8 @@ import numpy as np
 import pyarrow.parquet as pq
 
 DEFAULT_DATA_DIR = Path("opensky_2024_PRC_dataset/rawtrajectories")
+# DEFAULT_DATA_DIR = Path("opensky_2024_PRC_dataset/xue_processed_raw__v1")
+
 
 # 默认仅关注“物理意义明确”的列；只要列在源数据中存在，就会被统计。
 DEFAULT_BIN_WIDTHS: Dict[str, float] = {
@@ -34,7 +35,7 @@ DEFAULT_BIN_WIDTHS: Dict[str, float] = {
     "altitude": 25.0,
     "groundspeed": 1.0,
     "track": 0.01,
-    "vertical_rate": 32.0,
+    "vertical_rate": 1.0,
     "u_component_of_wind": 0.05,
     "v_component_of_wind": 0.05,
     "wind": 0.05,
@@ -540,6 +541,7 @@ def _plot_histograms(
     *,
     yscale: str,
     xlims: Optional[Dict[str, Tuple[float, float]]] = None,
+    dpi: int = 600,
 ) -> None:
     import matplotlib
 
@@ -549,12 +551,31 @@ def _plot_histograms(
     out_dir.mkdir(parents=True, exist_ok=True)
     if yscale not in {"linear", "log"}:
         raise ValueError(f"不支持的 yscale: {yscale}")
+    if dpi <= 0:
+        raise ValueError(f"dpi 必须为正数: {dpi}")
 
     for idx, spec in enumerate(specs):
-        y = counts[idx]
-        x = spec.start + spec.width * (np.arange(spec.bins, dtype=np.float64) + 0.5)
+        y_full = counts[idx]
 
-        fig, ax = plt.subplots(figsize=(10, 4), dpi=150)
+        xlim = None if not xlims else xlims.get(spec.column)
+        if xlim is not None:
+            lo, hi = float(xlim[0]), float(xlim[1])
+            i0 = int(math.floor((lo - spec.start) / spec.width)) - 1
+            i1 = int(math.ceil((hi - spec.start) / spec.width)) + 1
+            i0 = max(i0, 0)
+            i1 = min(i1, spec.bins)
+            if i1 <= i0:
+                i0 = max(min(i0, spec.bins - 1), 0)
+                i1 = min(i0 + 1, spec.bins)
+            y = y_full[i0:i1]
+            x = spec.start + spec.width * (
+                np.arange(i0, i1, dtype=np.float64) + 0.5
+            )
+        else:
+            y = y_full
+            x = spec.start + spec.width * (np.arange(spec.bins, dtype=np.float64) + 0.5)
+
+        fig, ax = plt.subplots(figsize=(10, 4), dpi=dpi)
         if yscale == "log":
             y_plot = np.maximum(y.astype(np.float64, copy=False), 1.0)
             ax.step(x, y_plot, where="mid", linewidth=0.8)
@@ -570,7 +591,6 @@ def _plot_histograms(
         ax.set_xlabel(f"{spec.column} ({xlabel_unit})" if xlabel_unit else spec.column)
         ax.set_ylabel("count")
         ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.4)
-        xlim = None if not xlims else xlims.get(spec.column)
         if xlim is not None:
             ax.set_xlim(xlim[0], xlim[1])
         else:
@@ -683,6 +703,8 @@ def _render_lat_lon_heatmap(
     lat_range: Tuple[float, float],
     plot_width: int,
     plot_height: int,
+    lon_step: float,
+    lat_step: float,
     color_scale: str,
     mean_alt_color_scale: str,
     dynspread: bool,
@@ -697,6 +719,12 @@ def _render_lat_lon_heatmap(
         raise RuntimeError(
             "缺少绘制 2D 热力图所需依赖（dask + datashader）。"
         ) from e
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LogNorm, Normalize
 
     lon_min, lon_max = lon_range
     lat_min, lat_max = lat_range
@@ -744,49 +772,126 @@ def _render_lat_lon_heatmap(
             ddf,
             lon_col,
             lat_col,
-            agg=ds.summary(count=ds.count(), mean_altitude=ds.mean(alt_clip_col)),
+            agg=ds.summary(
+                count=ds.count(),
+                count_alt=ds.count(alt_clip_col),
+                mean_altitude=ds.mean(alt_clip_col),
+            ),
         )
+        agg = agg.compute()
         agg_count = agg["count"]
+        agg_count_alt = agg["count_alt"]
         agg_mean_alt = agg["mean_altitude"]
     else:
-        agg_count = cvs.points(ddf, lon_col, lat_col, agg=ds.count())
+        agg_count = cvs.points(ddf, lon_col, lat_col, agg=ds.count()).compute()
+        agg_count_alt = None
         agg_mean_alt = None
 
-    img_count = tf.shade(agg_count, how=color_scale)
+    # 1) 保存原始 datashader 裸图（可用于对比）
+    img_count_raw = tf.shade(agg_count, how=color_scale)
     if dynspread:
-        img_count = tf.dynspread(
-            img_count, threshold=dynspread_threshold, max_px=dynspread_max_px
+        img_count_raw = tf.dynspread(
+            img_count_raw, threshold=dynspread_threshold, max_px=dynspread_max_px
         )
-    img_count = tf.set_background(img_count, "white")
-    img_count.to_pil().save(out_dir / "heatmap_lat_lon.png")
+    img_count_raw = tf.set_background(img_count_raw, "white")
+    img_count_raw.to_pil().save(out_dir / "heatmap_lat_lon_raw.png")
+
+    # 2) 输出 matplotlib 板式：坐标轴/标题/colorbar，默认 LogNorm + viridis，0 计数留白
+    count = agg_count.values
+    origin = "lower"
+    try:
+        y_dim = agg_count.dims[0]
+        y_coords = agg_count.coords[y_dim].values
+        if y_coords.size >= 2 and y_coords[0] > y_coords[-1]:
+            origin = "upper"
+    except Exception:
+        origin = "lower"
+
+    count_float = count.astype(np.float32, copy=False)
+    count_masked = np.where(count_float > 0, count_float, np.nan)
+    vmax = float(np.nanmax(count_masked)) if np.isfinite(count_masked).any() else 0.0
+    fig_w = 10.0
+    fig_h = max(4.5, fig_w * (plot_height / max(plot_width, 1)) * 0.9)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=150)
+    cmap = plt.get_cmap("viridis").copy()
+    cmap.set_bad("white")
+    if vmax >= 1.0:
+        norm = LogNorm(vmin=1.0, vmax=vmax)
+        im = ax.imshow(
+            count_masked,
+            origin=origin,
+            extent=(lon_min, lon_max, lat_min, lat_max),
+            cmap=cmap,
+            norm=norm,
+            aspect="auto",
+            interpolation="nearest",
+        )
+        cbar = fig.colorbar(im, ax=ax, pad=0.02)
+        cbar.set_label("Count (log scale)")
+    else:
+        ax.text(
+            0.5,
+            0.5,
+            "No data",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
+    points = int(np.nansum(count_float))
+    ax.set_title(
+        f"Lon/Lat Density (step_lon={lon_step:.6f}°, step_lat={lat_step:.6f}°, points={points})"
+    )
+    ax.set_xlabel("Longitude (deg)")
+    ax.set_ylabel("Latitude (deg)")
+    fig.tight_layout()
+    fig.savefig(out_dir / "heatmap_lat_lon.png")
+    plt.close(fig)
 
     if agg_mean_alt is not None:
+        # datashader 裸图（可用于对比）
         alt_cmap = ["#440154", "#3b528b", "#21908d", "#5dc863", "#fde725"]
-        img_alt = tf.shade(
+        img_alt_raw = tf.shade(
             agg_mean_alt,
             how=mean_alt_color_scale,
             cmap=alt_cmap,
             span=(alt_min, alt_max),
         )
         if dynspread:
-            img_alt = tf.dynspread(img_alt, threshold=dynspread_threshold, max_px=2)
-        img_alt = tf.set_background(img_alt, "white")
-        img_alt.to_pil().save(out_dir / "heatmap_lat_lon_mean_altitude.png")
+            img_alt_raw = tf.dynspread(img_alt_raw, threshold=dynspread_threshold, max_px=2)
+        img_alt_raw = tf.set_background(img_alt_raw, "white")
+        img_alt_raw.to_pil().save(out_dir / "heatmap_lat_lon_mean_altitude_raw.png")
 
+        mean_alt = agg_mean_alt.values.astype(np.float32, copy=False)
+        if agg_count_alt is not None:
+            count_alt = agg_count_alt.values.astype(np.float32, copy=False)
+            mean_alt = np.where(count_alt > 0, mean_alt, np.nan)
+            points_alt = int(np.nansum(count_alt))
+        else:
+            points_alt = points
 
-def _ensure_root_linear_hist_links(out_dir: Path, specs: Sequence[HistogramSpec]) -> None:
-    linear_dir = out_dir / "hist_y_linear"
-    for spec in specs:
-        src = linear_dir / f"hist_{spec.column}.png"
-        dst = out_dir / f"hist_{spec.column}.png"
-        if not src.exists():
-            continue
-        try:
-            if dst.exists() or dst.is_symlink():
-                dst.unlink()
-            dst.symlink_to(Path("hist_y_linear") / src.name)
-        except Exception:
-            shutil.copyfile(src, dst)
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=150)
+        cmap_alt = plt.get_cmap("viridis").copy()
+        cmap_alt.set_bad("white")
+        norm_alt = Normalize(vmin=float(alt_min), vmax=float(alt_max))
+        im = ax.imshow(
+            mean_alt,
+            origin=origin,
+            extent=(lon_min, lon_max, lat_min, lat_max),
+            cmap=cmap_alt,
+            norm=norm_alt,
+            aspect="auto",
+            interpolation="nearest",
+        )
+        cbar = fig.colorbar(im, ax=ax, pad=0.02)
+        cbar.set_label("Mean altitude (ft)")
+        ax.set_title(
+            f"Lon/Lat Mean Altitude (ft) (step_lon={lon_step:.6f}°, step_lat={lat_step:.6f}°, points={points_alt})"
+        )
+        ax.set_xlabel("Longitude (deg)")
+        ax.set_ylabel("Latitude (deg)")
+        fig.tight_layout()
+        fig.savefig(out_dir / "heatmap_lat_lon_mean_altitude.png")
+        plt.close(fig)
 
 
 def _build_delta_specs(
@@ -866,8 +971,8 @@ def main() -> int:
         help="输出根目录（默认：reports/data_distributions）",
     )
     parser.add_argument("--label", type=str, default=None, help="输出子目录名（默认：data-dir 名）")
-    parser.add_argument("--date-from", type=str, default=None, help="起始日期 YYYY-MM-DD（含）")
-    parser.add_argument("--date-to", type=str, default=None, help="结束日期 YYYY-MM-DD（含）")
+    parser.add_argument("--date-from", type=str, default="2022-01-01", help="起始日期 YYYY-MM-DD（含）")
+    parser.add_argument("--date-to", type=str, default="2022-02-28", help="结束日期 YYYY-MM-DD（含）")
     parser.add_argument(
         "--workers",
         type=int,
@@ -920,6 +1025,12 @@ def main() -> int:
         type=str,
         default="linear,log",
         help="输出直方图 y 轴缩放，逗号分隔（可选：linear,log；默认：linear,log）",
+    )
+    parser.add_argument(
+        "--hist-dpi",
+        type=int,
+        default=600,
+        help="1D 直方图 PNG 的 DPI（默认：600）",
     )
     parser.add_argument(
         "--plot-xlim",
@@ -1093,33 +1204,55 @@ def main() -> int:
     total_delta_pairs = 0
     total_rows = 0
 
-    with ProcessPoolExecutor(max_workers=len(chunks)) as executor:
-        futures = [
-            executor.submit(
-                _process_file_chunk,
-                (chunk, specs, delta_specs, args.batch_size, required_dt_ns),
-            )
-            for chunk in chunks
-        ]
-        for future in as_completed(futures):
-            result = future.result()
-            total_rows += result.total_rows
-            total_valid += result.valid
-            total_missing += result.missing
-            total_sums += result.sums
-            total_sumsq += result.sumsq
-            total_oor += result.out_of_range
-            for idx in range(len(specs)):
-                total_counts[idx] += result.counts[idx]
-            if delta_specs:
-                total_delta_valid += result.delta_valid
-                total_delta_missing += result.delta_missing
-                total_delta_sums += result.delta_sums
-                total_delta_sumsq += result.delta_sumsq
-                total_delta_oor += result.delta_out_of_range
-                total_delta_pairs += int(result.delta_pairs_total)
-                for idx in range(len(delta_specs)):
-                    total_delta_counts[idx] += result.delta_counts[idx]
+    if len(chunks) == 1:
+        result = _process_file_chunk(
+            (chunks[0], specs, delta_specs, args.batch_size, required_dt_ns)
+        )
+        total_rows += result.total_rows
+        total_valid += result.valid
+        total_missing += result.missing
+        total_sums += result.sums
+        total_sumsq += result.sumsq
+        total_oor += result.out_of_range
+        for idx in range(len(specs)):
+            total_counts[idx] += result.counts[idx]
+        if delta_specs:
+            total_delta_valid += result.delta_valid
+            total_delta_missing += result.delta_missing
+            total_delta_sums += result.delta_sums
+            total_delta_sumsq += result.delta_sumsq
+            total_delta_oor += result.delta_out_of_range
+            total_delta_pairs += int(result.delta_pairs_total)
+            for idx in range(len(delta_specs)):
+                total_delta_counts[idx] += result.delta_counts[idx]
+    else:
+        with ProcessPoolExecutor(max_workers=len(chunks)) as executor:
+            futures = [
+                executor.submit(
+                    _process_file_chunk,
+                    (chunk, specs, delta_specs, args.batch_size, required_dt_ns),
+                )
+                for chunk in chunks
+            ]
+            for future in as_completed(futures):
+                result = future.result()
+                total_rows += result.total_rows
+                total_valid += result.valid
+                total_missing += result.missing
+                total_sums += result.sums
+                total_sumsq += result.sumsq
+                total_oor += result.out_of_range
+                for idx in range(len(specs)):
+                    total_counts[idx] += result.counts[idx]
+                if delta_specs:
+                    total_delta_valid += result.delta_valid
+                    total_delta_missing += result.delta_missing
+                    total_delta_sums += result.delta_sums
+                    total_delta_sumsq += result.delta_sumsq
+                    total_delta_oor += result.delta_out_of_range
+                    total_delta_pairs += int(result.delta_pairs_total)
+                    for idx in range(len(delta_specs)):
+                        total_delta_counts[idx] += result.delta_counts[idx]
 
     if total_rows != total_rows_meta:
         print(
@@ -1208,6 +1341,7 @@ def main() -> int:
         meta["delta_pairs_total"] = int(total_delta_pairs)
     meta["hist_plot"] = {
         "yscales": [s.strip() for s in args.hist_yscales.split(",") if s.strip()],
+        "dpi": args.hist_dpi,
         "default_xlims": DEFAULT_PLOT_XLIMS,
         "xlims_override": args.plot_xlim,
     }
@@ -1311,11 +1445,16 @@ def main() -> int:
         for yscale in yscales:
             plot_dir = out_dir / f"hist_y_{yscale}"
             _plot_histograms(
-                plot_dir, combined_specs, combined_counts, yscale=yscale, xlims=xlims
+                plot_dir,
+                combined_specs,
+                combined_counts,
+                yscale=yscale,
+                xlims=xlims,
+                dpi=args.hist_dpi,
             )
-        if "linear" in yscales:
-            _ensure_root_linear_hist_links(out_dir, combined_specs)
-        print("[INFO] 已生成 1D 直方图 PNG：hist_y_linear/ 与 hist_y_log/（根目录 hist_<col>.png 指向线性版）")
+        for legacy in out_dir.glob("hist_*.png"):
+            legacy.unlink()
+        print("[INFO] 已生成 1D 直方图 PNG：hist_y_linear/ 与 hist_y_log/（根目录不再输出 hist_<col>.png）")
 
     if heatmap_config is not None:
         print(
@@ -1348,15 +1487,19 @@ def main() -> int:
             lat_range=(heatmap_config["lat_min"], heatmap_config["lat_max"]),
             plot_width=heatmap_config["plot_width"],
             plot_height=heatmap_config["plot_height"],
+            lon_step=float(heatmap_config["lon_step_effective"]),
+            lat_step=float(heatmap_config["lat_step_effective"]),
             color_scale=heatmap_config["color_scale"],
             mean_alt_color_scale=heatmap_config["alt_color_scale"],
             dynspread=heatmap_config["dynspread"],
             dynspread_threshold=heatmap_config["dynspread_threshold"],
             dynspread_max_px=heatmap_config["dynspread_max_px"],
         )
-        print("[INFO] 已生成 2D 热力图 PNG：heatmap_lat_lon.png")
+        print("[INFO] 已生成 2D 热力图 PNG：heatmap_lat_lon.png（matplotlib 版）")
+        print("[INFO] 已生成 2D 热力图 PNG：heatmap_lat_lon_raw.png（datashader 裸图）")
         if heatmap_config["mean_altitude"] and "altitude" in available_cols:
-            print("[INFO] 已生成经纬-平均高度热力图：heatmap_lat_lon_mean_altitude.png")
+            print("[INFO] 已生成经纬-平均高度热力图：heatmap_lat_lon_mean_altitude.png（matplotlib 版）")
+            print("[INFO] 已生成经纬-平均高度热力图：heatmap_lat_lon_mean_altitude_raw.png（datashader 裸图）")
     elif not args.no_heatmap:
         print("[INFO] 数据中不存在 latitude/longitude，跳过 2D 热力图")
 
