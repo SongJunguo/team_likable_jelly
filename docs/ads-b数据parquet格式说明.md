@@ -192,11 +192,13 @@
 - `latitude/longitude`（2D heatmap）：0.005°（若像素数过大，会自动增大 step 以满足 `--heatmap-max-cells` 上限）
 - 直方图 y 轴：默认同时输出线性与对数（`--hist-yscales linear,log`）
 - 直方图 PNG DPI：默认 200（`--hist-dpi 200`）
+- 热力图 PNG DPI：默认 150（`--heatmap-dpi 150`）
 - 直方图绘图默认 x 轴裁剪（不影响 `hist_counts.csv` 统计本身，可用 `--plot-xlim` 覆盖）：
   - `groundspeed`：[0, 700] kt
   - `altitude`：[-1000, 45000] ft
   - `vertical_rate` / `daltitude`：[-5000, 5000] ft/min
 - delta（相邻点差值）直方图：默认开启（`--delta-hist`），只在同一 `flight_id` 内且 `timestamp` 差值**严格为 1 秒**的相邻点上计算（可用 `--delta-required-dt-seconds` 覆盖）
+- `delta_vertical_rate`：bin=1 ft/min，max=2000 ft/min（可用 `--delta-bin-width/--delta-max` 覆盖）
 
 ### 8.3 常用命令示例
 

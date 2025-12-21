@@ -87,6 +87,7 @@ DELTA_DEFAULTS = {
     "latitude": {"bin_width": 1e-5, "max": 0.02, "circular": False},
     "longitude": {"bin_width": 1e-5, "max": 0.02, "circular": False},
     "track": {"bin_width": 0.01, "max": 10.0, "circular": True},
+    "vertical_rate": {"bin_width": 1.0, "max": 2000.0, "circular": False},
     "u_component_of_wind": {"bin_width": 0.05, "max": 5.0, "circular": False},
     "v_component_of_wind": {"bin_width": 0.05, "max": 5.0, "circular": False},
     "temperature": {"bin_width": 0.05, "max": 5.0, "circular": False},
@@ -705,6 +706,7 @@ def _render_lat_lon_heatmap(
     plot_height: int,
     lon_step: float,
     lat_step: float,
+    dpi: int,
     color_scale: str,
     mean_alt_color_scale: str,
     dynspread: bool,
@@ -732,6 +734,8 @@ def _render_lat_lon_heatmap(
         raise ValueError(
             f"heatmap 尺寸非法：plot_width={plot_width}, plot_height={plot_height}"
         )
+    if dpi <= 0:
+        raise ValueError(f"heatmap dpi 必须为正数: {dpi}")
 
     columns = [lon_col, lat_col]
     alt_clip_col = "__altitude_clipped_for_heatmap"
@@ -812,7 +816,7 @@ def _render_lat_lon_heatmap(
     vmax = float(np.nanmax(count_masked)) if np.isfinite(count_masked).any() else 0.0
     fig_w = 10.0
     fig_h = max(4.5, fig_w * (plot_height / max(plot_width, 1)) * 0.9)
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=150)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi)
     cmap = plt.get_cmap("viridis").copy()
     cmap.set_bad("white")
     if vmax >= 1.0:
@@ -869,7 +873,7 @@ def _render_lat_lon_heatmap(
         else:
             points_alt = points
 
-        fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=150)
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi)
         cmap_alt = plt.get_cmap("viridis").copy()
         cmap_alt.set_bad("white")
         norm_alt = Normalize(vmin=float(alt_min), vmax=float(alt_max))
@@ -1065,8 +1069,8 @@ def main() -> int:
     parser.add_argument(
         "--heatmap-max-cells",
         type=int,
-        default=16_000_000,
-        help="热力图最大像素数上限（超过会自动增大 step；默认：16,000,000）",
+        default=60_000_000,
+        help="热力图最大像素数上限（超过会自动增大 step；默认：60,000,000）",
     )
     parser.add_argument("--heatmap-lon-min", type=float, default=None)
     parser.add_argument("--heatmap-lon-max", type=float, default=None)
@@ -1121,6 +1125,12 @@ def main() -> int:
         type=int,
         default=3,
         help="dynspread max_px（默认：3）",
+    )
+    parser.add_argument(
+        "--heatmap-dpi",
+        type=int,
+        default=5000,
+        help="热力图 PNG 的 DPI（默认：5000）",
     )
     args = parser.parse_args()
 
@@ -1347,6 +1357,7 @@ def main() -> int:
     }
     if heatmap_config is not None:
         meta["heatmap_lat_lon"] = heatmap_config
+        meta["heatmap_lat_lon"]["dpi"] = args.heatmap_dpi
     (out_dir / "hist_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
 
     legacy_npz = out_dir / "hist_counts.npz"
@@ -1489,6 +1500,7 @@ def main() -> int:
             plot_height=heatmap_config["plot_height"],
             lon_step=float(heatmap_config["lon_step_effective"]),
             lat_step=float(heatmap_config["lat_step_effective"]),
+            dpi=int(heatmap_config["dpi"]),
             color_scale=heatmap_config["color_scale"],
             mean_alt_color_scale=heatmap_config["alt_color_scale"],
             dynspread=heatmap_config["dynspread"],
