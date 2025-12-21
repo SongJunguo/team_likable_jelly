@@ -157,3 +157,62 @@
 | `aircraft_type` | 机型 | string |
 | `adep_latitude_deg`,`adep_longitude_deg` | 起飞机场经纬度（来自 `airports_tz.parquet`） | ° |
 | `ades_latitude_deg`,`ades_longitude_deg` | 到达机场经纬度（来自 `airports_tz.parquet`） | ° |
+
+---
+
+## 8. 分布统计与可视化（直方图 / 经纬热力图）
+
+仓库提供脚本 `analysis/plot_adsb_parquet_distributions.py` 用于统计字段分布并绘图，**只统计源数据中已落盘的列**（不会为缺失列做派生计算，因此 raw 目录里不会额外计算/绘制 `gsx/tas/wind` 等）。
+
+### 8.1 输出内容
+
+脚本会在 `reports/data_distributions/<label>/<date_from__date_to>/` 下输出：
+
+- `hist_counts.npz`：每个字段的 1D 直方图计数（key=列名）
+- `hist_meta.json`：直方图配置（bin 宽度、起点、bins 数）与元数据 min/max
+- `summary.csv`：每列的 valid/missing/mean/std 等汇总
+- `hist_<col>.png`：每列 1D 直方图（y 轴线性）
+- `heatmap_lat_lon.png`：`latitude/longitude` 2D 热力图（若两列存在且未禁用）
+
+### 8.2 默认 bin / 网格分辨率（可按需用 CLI 参数覆盖）
+
+- `altitude`：25 ft
+- `vertical_rate`：32 ft/min
+- `u_component_of_wind` / `v_component_of_wind` / `wind`：0.05 m/s（仅当列存在时统计）
+- `temperature`：0.05 K
+- `latitude` / `longitude`（1D）：0.001°
+- `latitude/longitude`（2D heatmap）：0.005°
+- 直方图 y 轴：线性（`count`）
+
+### 8.3 常用命令示例
+
+建议在数据处理环境中运行：
+
+```bash
+conda activate opensky
+```
+
+统计 raw（建议先跑一天做 sanity check）：
+
+```bash
+python analysis/plot_adsb_parquet_distributions.py \
+  --data-dir opensky_2024_PRC_dataset/rawtrajectories \
+  --date-from 2022-01-01 --date-to 2022-01-01
+```
+
+统计插值目录（会自动统计已落盘的 `gsx/gsy/tasx/tasy/tas/wind` 等列）：
+
+```bash
+python analysis/plot_adsb_parquet_distributions.py \
+  --data-dir opensky_2024_PRC_dataset/interpolated_clean__PCA_v6 \
+  --date-from 2022-01-01 --date-to 2022-01-01
+```
+
+热力图范围控制（默认 `--heatmap-range-mode auto`，若全范围像素过大则回退到中国附近 bbox：lon=[70,140], lat=[0,70]）：
+
+```bash
+python analysis/plot_adsb_parquet_distributions.py \
+  --data-dir opensky_2024_PRC_dataset/rawtrajectories \
+  --date-from 2022-01-01 --date-to 2022-01-01 \
+  --heatmap-range-mode full
+```

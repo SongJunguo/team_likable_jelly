@@ -14,12 +14,12 @@ OUT_DIR="${REPO_ROOT}/reports/xue_processed_raw__v1"
 PROCS=28
 DATE_FROM="2022-01-01"
 DATE_TO="2022-12-31"
-FORCE=0
+FORCE=1
 DRYRUN=0
 LIMIT=0
 VERBOSE=0
 LOG_FILE=""
-MIN_SPEED=""
+MIN_SPEED="1300"
 
 usage() {
   cat <<EOF
