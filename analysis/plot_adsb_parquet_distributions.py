@@ -15,6 +15,7 @@ import csv
 import json
 import math
 import multiprocessing as mp
+import shutil
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -32,7 +33,7 @@ DEFAULT_BIN_WIDTHS: Dict[str, float] = {
     "longitude": 0.001,
     "altitude": 25.0,
     "groundspeed": 1.0,
-    "track": 1.0,
+    "track": 0.01,
     "vertical_rate": 32.0,
     "u_component_of_wind": 0.05,
     "v_component_of_wind": 0.05,
@@ -74,6 +75,23 @@ UNITS: Dict[str, str] = {
 DEFAULT_HEATMAP_LON_RANGE = (70.0, 140.0)
 DEFAULT_HEATMAP_LAT_RANGE = (0.0, 70.0)
 
+DEFAULT_PLOT_XLIMS: Dict[str, Tuple[float, float]] = {
+    "altitude": (-1000.0, 45000.0),
+    "vertical_rate": (-5000.0, 5000.0),
+    "daltitude": (-5000.0, 5000.0),
+    "groundspeed": (0.0, 700.0),
+}
+
+DELTA_DEFAULTS = {
+    "latitude": {"bin_width": 1e-5, "max": 0.02, "circular": False},
+    "longitude": {"bin_width": 1e-5, "max": 0.02, "circular": False},
+    "track": {"bin_width": 0.01, "max": 10.0, "circular": True},
+    "u_component_of_wind": {"bin_width": 0.05, "max": 5.0, "circular": False},
+    "v_component_of_wind": {"bin_width": 0.05, "max": 5.0, "circular": False},
+    "temperature": {"bin_width": 0.05, "max": 5.0, "circular": False},
+    "specific_humidity": {"bin_width": 1e-4, "max": 0.01, "circular": False},
+}
+
 
 @dataclass(frozen=True)
 class ColumnMetaStats:
@@ -89,6 +107,17 @@ class HistogramSpec:
     bins: int
 
 
+@dataclass(frozen=True)
+class DeltaHistogramSpec:
+    column: str
+    source_column: str
+    start: float
+    width: float
+    bins: int
+    circular: bool
+    max_value: float
+
+
 @dataclass
 class ChunkResult:
     counts: List[np.ndarray]
@@ -97,6 +126,13 @@ class ChunkResult:
     sums: np.ndarray
     sumsq: np.ndarray
     out_of_range: np.ndarray
+    delta_counts: List[np.ndarray]
+    delta_valid: np.ndarray
+    delta_missing: np.ndarray
+    delta_sums: np.ndarray
+    delta_sumsq: np.ndarray
+    delta_out_of_range: np.ndarray
+    delta_pairs_total: int
     total_rows: int
     files: int
 
@@ -214,10 +250,11 @@ def _build_hist_specs(
 
 
 def _process_file_chunk(
-    args: Tuple[List[str], List[HistogramSpec], int]
+    args: Tuple[List[str], List[HistogramSpec], List[DeltaHistogramSpec], int, int]
 ) -> ChunkResult:
-    file_paths, specs, batch_size = args
-    columns = [spec.column for spec in specs]
+    file_paths, specs, delta_specs, batch_size, required_dt_ns = args
+    columns_hist = [spec.column for spec in specs]
+    delta_enabled = bool(delta_specs)
 
     counts = [np.zeros(spec.bins, dtype=np.uint64) for spec in specs]
     valid = np.zeros(len(specs), dtype=np.int64)
@@ -225,15 +262,38 @@ def _process_file_chunk(
     sums = np.zeros(len(specs), dtype=np.float64)
     sumsq = np.zeros(len(specs), dtype=np.float64)
     out_of_range = np.zeros(len(specs), dtype=np.int64)
+    delta_counts = [np.zeros(spec.bins, dtype=np.uint64) for spec in delta_specs]
+    delta_valid = np.zeros(len(delta_specs), dtype=np.int64)
+    delta_missing = np.zeros(len(delta_specs), dtype=np.int64)
+    delta_sums = np.zeros(len(delta_specs), dtype=np.float64)
+    delta_sumsq = np.zeros(len(delta_specs), dtype=np.float64)
+    delta_out_of_range = np.zeros(len(delta_specs), dtype=np.int64)
+    delta_pairs_total = 0
     total_rows = 0
 
     for file_path_str in file_paths:
         parquet = pq.ParquetFile(file_path_str)
         total_rows += parquet.metadata.num_rows
 
-        for batch in parquet.iter_batches(columns=columns, batch_size=batch_size):
+        read_columns = list(columns_hist)
+        if delta_enabled:
+            read_columns.extend(["flight_id", "timestamp"])
+            read_columns.extend([spec.source_column for spec in delta_specs])
+        read_columns = sorted(set(read_columns))
+        col_to_idx = {col: idx for idx, col in enumerate(read_columns)}
+
+        last_fid: Optional[np.int64] = None
+        last_ts: Optional[np.datetime64] = None
+        last_values: Dict[str, float] = {}
+
+        for batch in parquet.iter_batches(columns=read_columns, batch_size=batch_size):
+            arrays = {
+                col: batch.column(col_to_idx[col]).to_numpy(zero_copy_only=False)
+                for col in read_columns
+            }
+
             for idx, spec in enumerate(specs):
-                arr = batch.column(idx).to_numpy(zero_copy_only=False)
+                arr = arrays[spec.column]
                 if arr.size == 0:
                     continue
                 finite_mask = np.isfinite(arr)
@@ -260,6 +320,94 @@ def _process_file_chunk(
                 sums[idx] += float(values.sum(dtype=np.float64))
                 sumsq[idx] += float(np.square(values, dtype=np.float64).sum(dtype=np.float64))
 
+            if delta_enabled:
+                fid = arrays["flight_id"]
+                ts = arrays["timestamp"]
+                if fid.size == 0:
+                    continue
+                if fid.size != ts.size:
+                    raise RuntimeError("flight_id 与 timestamp 行数不一致，无法计算 delta-hist")
+
+                fid_prev = fid[:-1]
+                fid_curr = fid[1:]
+                ts_prev = ts[:-1]
+                ts_curr = ts[1:]
+                dt_ns = (ts_curr - ts_prev).astype("timedelta64[ns]").astype(np.int64)
+                base_mask = (fid_curr == fid_prev) & (dt_ns == required_dt_ns)
+                delta_pairs_total += int(base_mask.sum())
+
+                cross_mask = False
+                cross_dt_ok = False
+                if last_fid is not None and last_ts is not None:
+                    dt0 = (ts[0] - last_ts).astype("timedelta64[ns]").astype(np.int64)
+                    cross_dt_ok = bool(dt0 == required_dt_ns)
+                    cross_mask = bool(fid[0] == last_fid and cross_dt_ok)
+                    if cross_mask:
+                        delta_pairs_total += 1
+
+                for d_idx, dspec in enumerate(delta_specs):
+                    arr = arrays[dspec.source_column].astype(np.float64, copy=False)
+
+                    val_prev = arr[:-1]
+                    val_curr = arr[1:]
+                    finite_pair = np.isfinite(val_prev) & np.isfinite(val_curr)
+                    mask = base_mask & finite_pair
+                    if not finite_pair.all():
+                        delta_missing[d_idx] += int((base_mask & ~finite_pair).sum())
+
+                    if mask.any():
+                        if dspec.circular:
+                            diff = val_curr[mask] - val_prev[mask]
+                            delta = np.abs(((diff + 180.0) % 360.0) - 180.0)
+                        else:
+                            delta = np.abs(val_curr[mask] - val_prev[mask])
+
+                        bin_idx = np.floor((delta - dspec.start) / dspec.width).astype(
+                            np.int64
+                        )
+                        in_range = (bin_idx >= 0) & (bin_idx < dspec.bins)
+                        if not in_range.all():
+                            delta_out_of_range[d_idx] += int(
+                                bin_idx.size - in_range.sum()
+                            )
+                            bin_idx = bin_idx[in_range]
+                            delta = delta[in_range]
+
+                        if bin_idx.size:
+                            delta_counts[d_idx] += np.bincount(
+                                bin_idx, minlength=dspec.bins
+                            ).astype(np.uint64, copy=False)
+                            delta_valid[d_idx] += int(delta.size)
+                            delta_sums[d_idx] += float(delta.sum(dtype=np.float64))
+                            delta_sumsq[d_idx] += float(
+                                np.square(delta, dtype=np.float64).sum(dtype=np.float64)
+                            )
+
+                    if cross_mask:
+                        v_prev = float(last_values.get(dspec.source_column, float("nan")))
+                        v_curr = float(arr[0])
+                        if math.isfinite(v_prev) and math.isfinite(v_curr):
+                            if dspec.circular:
+                                diff = v_curr - v_prev
+                                delta0 = abs(((diff + 180.0) % 360.0) - 180.0)
+                            else:
+                                delta0 = abs(v_curr - v_prev)
+                            bin0 = int(math.floor((delta0 - dspec.start) / dspec.width))
+                            if 0 <= bin0 < dspec.bins:
+                                delta_counts[d_idx][bin0] += np.uint64(1)
+                                delta_valid[d_idx] += 1
+                                delta_sums[d_idx] += float(delta0)
+                                delta_sumsq[d_idx] += float(delta0 * delta0)
+                            else:
+                                delta_out_of_range[d_idx] += 1
+                        else:
+                            delta_missing[d_idx] += 1
+
+                    last_values[dspec.source_column] = float(arr[-1])
+
+                last_fid = fid[-1]
+                last_ts = ts[-1]
+
     return ChunkResult(
         counts=counts,
         valid=valid,
@@ -267,6 +415,13 @@ def _process_file_chunk(
         sums=sums,
         sumsq=sumsq,
         out_of_range=out_of_range,
+        delta_counts=delta_counts,
+        delta_valid=delta_valid,
+        delta_missing=delta_missing,
+        delta_sums=delta_sums,
+        delta_sumsq=delta_sumsq,
+        delta_out_of_range=delta_out_of_range,
+        delta_pairs_total=delta_pairs_total,
         total_rows=total_rows,
         files=len(file_paths),
     )
@@ -331,6 +486,45 @@ def _write_summary_csv(
             )
 
 
+def _write_hist_counts_csv(
+    out_path: Path,
+    specs: Sequence[HistogramSpec],
+    counts: Sequence[np.ndarray],
+) -> None:
+    with out_path.open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            [
+                "column",
+                "unit",
+                "bin_width",
+                "start",
+                "bin_index",
+                "bin_left",
+                "bin_right",
+                "count",
+            ]
+        )
+        for spec, y in zip(specs, counts):
+            unit = UNITS.get(spec.column, "")
+            start = float(spec.start)
+            width = float(spec.width)
+            for bin_index, c in enumerate(y):
+                bin_left = start + width * bin_index
+                writer.writerow(
+                    [
+                        spec.column,
+                        unit,
+                        width,
+                        start,
+                        bin_index,
+                        bin_left,
+                        bin_left + width,
+                        int(c),
+                    ]
+                )
+
+
 def _split_into_chunks(items: Sequence[Path], chunks: int) -> List[List[str]]:
     chunks = max(1, min(chunks, len(items)))
     result: List[List[str]] = [[] for _ in range(chunks)]
@@ -343,24 +537,44 @@ def _plot_histograms(
     out_dir: Path,
     specs: Sequence[HistogramSpec],
     counts: Sequence[np.ndarray],
+    *,
+    yscale: str,
+    xlims: Optional[Dict[str, Tuple[float, float]]] = None,
 ) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if yscale not in {"linear", "log"}:
+        raise ValueError(f"不支持的 yscale: {yscale}")
+
     for idx, spec in enumerate(specs):
         y = counts[idx]
         x = spec.start + spec.width * (np.arange(spec.bins, dtype=np.float64) + 0.5)
 
         fig, ax = plt.subplots(figsize=(10, 4), dpi=150)
-        ax.plot(x, y, linewidth=0.8)
-        ax.set_title(f"{spec.column} histogram (bin={spec.width} {UNITS.get(spec.column, '')})")
+        if yscale == "log":
+            y_plot = np.maximum(y.astype(np.float64, copy=False), 1.0)
+            ax.step(x, y_plot, where="mid", linewidth=0.8)
+            ax.set_yscale("log")
+            ax.set_ylim(bottom=1)
+        else:
+            ax.step(x, y, where="mid", linewidth=0.8)
+
+        ax.set_title(
+            f"{spec.column} histogram (bin={spec.width} {UNITS.get(spec.column, '')}, y={yscale})"
+        )
         xlabel_unit = UNITS.get(spec.column, "")
         ax.set_xlabel(f"{spec.column} ({xlabel_unit})" if xlabel_unit else spec.column)
         ax.set_ylabel("count")
         ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.4)
-        ax.set_xlim(spec.start, spec.start + spec.bins * spec.width)
+        xlim = None if not xlims else xlims.get(spec.column)
+        if xlim is not None:
+            ax.set_xlim(xlim[0], xlim[1])
+        else:
+            ax.set_xlim(spec.start, spec.start + spec.bins * spec.width)
         fig.tight_layout()
         fig.savefig(out_dir / f"hist_{spec.column}.png")
         plt.close(fig)
@@ -415,16 +629,65 @@ def _choose_heatmap_range(
     return *bbox, "auto(bbox)"
 
 
+def _adjust_heatmap_steps_for_max_cells(
+    lon_range: Tuple[float, float],
+    lat_range: Tuple[float, float],
+    lon_step: float,
+    lat_step: float,
+    max_cells: int,
+) -> Tuple[float, float, int, int, int, float]:
+    if lon_step <= 0 or lat_step <= 0:
+        raise ValueError(f"heatmap step 必须为正数: lon_step={lon_step}, lat_step={lat_step}")
+    if max_cells <= 0:
+        raise ValueError(f"heatmap max_cells 必须为正数: {max_cells}")
+
+    lon_min, lon_max = lon_range
+    lat_min, lat_max = lat_range
+    lon_span = float(lon_max - lon_min)
+    lat_span = float(lat_max - lat_min)
+    if lon_span <= 0 or lat_span <= 0:
+        raise ValueError(f"heatmap range 非法：lon_range={lon_range}, lat_range={lat_range}")
+
+    def compute(step_x: float, step_y: float) -> Tuple[int, int, int]:
+        width = int(math.floor(lon_span / step_x + 1e-12)) + 1
+        height = int(math.floor(lat_span / step_y + 1e-12)) + 1
+        return width, height, width * height
+
+    width0, height0, cells0 = compute(lon_step, lat_step)
+    if cells0 <= max_cells:
+        return lon_step, lat_step, width0, height0, cells0, 1.0
+
+    scale = math.sqrt(cells0 / max_cells)
+    scale = max(scale, 1.0)
+    step_x = lon_step * scale
+    step_y = lat_step * scale
+    width, height, cells = compute(step_x, step_y)
+    while cells > max_cells:
+        step_x *= 1.01
+        step_y *= 1.01
+        width, height, cells = compute(step_x, step_y)
+
+    return step_x, step_y, width, height, cells, scale
+
+
 def _render_lat_lon_heatmap(
     out_dir: Path,
     files: Sequence[Path],
     lon_col: str,
     lat_col: str,
+    alt_col: Optional[str],
+    mean_altitude: bool,
+    alt_min: float,
+    alt_max: float,
     lon_range: Tuple[float, float],
     lat_range: Tuple[float, float],
-    lon_step: float,
-    lat_step: float,
+    plot_width: int,
+    plot_height: int,
     color_scale: str,
+    mean_alt_color_scale: str,
+    dynspread: bool,
+    dynspread_threshold: float,
+    dynspread_max_px: int,
 ) -> None:
     try:
         import dask.dataframe as dd
@@ -437,16 +700,20 @@ def _render_lat_lon_heatmap(
 
     lon_min, lon_max = lon_range
     lat_min, lat_max = lat_range
-    plot_width = int(math.floor((lon_max - lon_min) / lon_step + 1e-12)) + 1
-    plot_height = int(math.floor((lat_max - lat_min) / lat_step + 1e-12)) + 1
     if plot_width <= 0 or plot_height <= 0:
         raise ValueError(
-            f"heatmap range 非法：lon_range={lon_range}, lat_range={lat_range}, step=({lon_step},{lat_step})"
+            f"heatmap 尺寸非法：plot_width={plot_width}, plot_height={plot_height}"
         )
+
+    columns = [lon_col, lat_col]
+    alt_clip_col = "__altitude_clipped_for_heatmap"
+    enable_mean_alt = bool(mean_altitude and alt_col)
+    if enable_mean_alt:
+        columns.append(alt_col)
 
     ddf = dd.read_parquet(
         [str(p) for p in files],
-        columns=[lon_col, lat_col],
+        columns=columns,
         engine="pyarrow",
     ).dropna(subset=[lon_col, lat_col])
     ddf = ddf[
@@ -455,6 +722,16 @@ def _render_lat_lon_heatmap(
         & (ddf[lat_col] >= lat_min)
         & (ddf[lat_col] <= lat_max)
     ]
+    if enable_mean_alt:
+        if alt_max <= alt_min:
+            raise ValueError(f"heatmap-alt 范围非法: [{alt_min}, {alt_max}]")
+        ddf = ddf.assign(
+            **{
+                alt_clip_col: ddf[alt_col].where(
+                    (ddf[alt_col] >= alt_min) & (ddf[alt_col] <= alt_max)
+                )
+            }
+        )
 
     cvs = ds.Canvas(
         plot_width=plot_width,
@@ -462,10 +739,114 @@ def _render_lat_lon_heatmap(
         x_range=(lon_min, lon_max),
         y_range=(lat_min, lat_max),
     )
-    agg = cvs.points(ddf, lon_col, lat_col, agg=ds.count())
-    img = tf.shade(agg, how=color_scale)
-    img = tf.set_background(img, "white")
-    img.to_pil().save(out_dir / "heatmap_lat_lon.png")
+    if enable_mean_alt:
+        agg = cvs.points(
+            ddf,
+            lon_col,
+            lat_col,
+            agg=ds.summary(count=ds.count(), mean_altitude=ds.mean(alt_clip_col)),
+        )
+        agg_count = agg["count"]
+        agg_mean_alt = agg["mean_altitude"]
+    else:
+        agg_count = cvs.points(ddf, lon_col, lat_col, agg=ds.count())
+        agg_mean_alt = None
+
+    img_count = tf.shade(agg_count, how=color_scale)
+    if dynspread:
+        img_count = tf.dynspread(
+            img_count, threshold=dynspread_threshold, max_px=dynspread_max_px
+        )
+    img_count = tf.set_background(img_count, "white")
+    img_count.to_pil().save(out_dir / "heatmap_lat_lon.png")
+
+    if agg_mean_alt is not None:
+        alt_cmap = ["#440154", "#3b528b", "#21908d", "#5dc863", "#fde725"]
+        img_alt = tf.shade(
+            agg_mean_alt,
+            how=mean_alt_color_scale,
+            cmap=alt_cmap,
+            span=(alt_min, alt_max),
+        )
+        if dynspread:
+            img_alt = tf.dynspread(img_alt, threshold=dynspread_threshold, max_px=2)
+        img_alt = tf.set_background(img_alt, "white")
+        img_alt.to_pil().save(out_dir / "heatmap_lat_lon_mean_altitude.png")
+
+
+def _ensure_root_linear_hist_links(out_dir: Path, specs: Sequence[HistogramSpec]) -> None:
+    linear_dir = out_dir / "hist_y_linear"
+    for spec in specs:
+        src = linear_dir / f"hist_{spec.column}.png"
+        dst = out_dir / f"hist_{spec.column}.png"
+        if not src.exists():
+            continue
+        try:
+            if dst.exists() or dst.is_symlink():
+                dst.unlink()
+            dst.symlink_to(Path("hist_y_linear") / src.name)
+        except Exception:
+            shutil.copyfile(src, dst)
+
+
+def _build_delta_specs(
+    available_cols: set[str],
+    overrides_bin_width: Sequence[str],
+    overrides_max: Sequence[str],
+) -> List[DeltaHistogramSpec]:
+    delta_bin_widths = {k: float(v["bin_width"]) for k, v in DELTA_DEFAULTS.items()}
+    delta_max = {k: float(v["max"]) for k, v in DELTA_DEFAULTS.items()}
+
+    for item in overrides_bin_width:
+        parts = item.split(":")
+        if len(parts) != 2:
+            raise ValueError(f"--delta-bin-width 格式错误: {item}（期望 <col>:<width>）")
+        col, width_s = parts
+        if col not in delta_bin_widths:
+            raise ValueError(
+                f"--delta-bin-width 不支持列: {col}（可选：{sorted(delta_bin_widths.keys())}）"
+            )
+        width = float(width_s)
+        if not (width > 0):
+            raise ValueError(f"--delta-bin-width 宽度必须为正数: {item}")
+        delta_bin_widths[col] = width
+
+    for item in overrides_max:
+        parts = item.split(":")
+        if len(parts) != 2:
+            raise ValueError(f"--delta-max 格式错误: {item}（期望 <col>:<max>）")
+        col, max_s = parts
+        if col not in delta_max:
+            raise ValueError(
+                f"--delta-max 不支持列: {col}（可选：{sorted(delta_max.keys())}）"
+            )
+        max_v = float(max_s)
+        if not (max_v > 0):
+            raise ValueError(f"--delta-max 必须为正数: {item}")
+        delta_max[col] = max_v
+
+    specs: List[DeltaHistogramSpec] = []
+    for src, cfg in DELTA_DEFAULTS.items():
+        if src not in available_cols:
+            continue
+        width = float(delta_bin_widths[src])
+        max_v = float(delta_max[src])
+        bins = int(math.floor((max_v - 0.0) / width + 1e-12)) + 1
+        bins = max(bins, 1)
+        out_col = f"delta_{src}"
+        UNITS[out_col] = UNITS.get(src, "")
+        specs.append(
+            DeltaHistogramSpec(
+                column=out_col,
+                source_column=src,
+                start=0.0,
+                width=width,
+                bins=bins,
+                circular=bool(cfg.get("circular", False)),
+                max_value=max_v,
+            )
+        )
+    return specs
 
 
 def main() -> int:
@@ -490,7 +871,7 @@ def main() -> int:
     parser.add_argument(
         "--workers",
         type=int,
-        default=min(max(mp.cpu_count() - 2, 1), 8),
+        default=min(max(mp.cpu_count() - 2, 1), 28),
         help="并行进程数（默认：min(cpu-2, 8)）",
     )
     parser.add_argument(
@@ -500,9 +881,51 @@ def main() -> int:
         help="pyarrow iter_batches 的 batch_size（默认：1,000,000）",
     )
     parser.add_argument(
+        "--bin-width",
+        action="append",
+        default=[],
+        help="覆盖直方图 bin 宽度：<col>:<width>（可重复）",
+    )
+    parser.add_argument(
         "--no-hist-plots",
         action="store_true",
-        help="不输出 1D 直方图 PNG（仍会输出 hist_counts.npz）",
+        help="不输出 1D 直方图 PNG（仍会输出 hist_counts.csv）",
+    )
+    parser.add_argument(
+        "--delta-hist",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="是否输出相邻点差值（delta）直方图（默认：开启）",
+    )
+    parser.add_argument(
+        "--delta-required-dt-seconds",
+        type=float,
+        default=1.0,
+        help="仅统计相邻点 timestamp 差值等于该秒数的 delta（默认：1.0；即严格 1 秒）",
+    )
+    parser.add_argument(
+        "--delta-bin-width",
+        action="append",
+        default=[],
+        help="覆盖 delta 直方图 bin 宽度：<col>:<width>（col 为原始列名，如 latitude；可重复）",
+    )
+    parser.add_argument(
+        "--delta-max",
+        action="append",
+        default=[],
+        help="覆盖 delta 直方图最大值：<col>:<max>（col 为原始列名；可重复）",
+    )
+    parser.add_argument(
+        "--hist-yscales",
+        type=str,
+        default="linear,log",
+        help="输出直方图 y 轴缩放，逗号分隔（可选：linear,log；默认：linear,log）",
+    )
+    parser.add_argument(
+        "--plot-xlim",
+        action="append",
+        default=[],
+        help="覆盖直方图绘图 x 轴范围：<col>:<min>:<max>（可重复）",
     )
     parser.add_argument(
         "--no-heatmap",
@@ -524,15 +947,15 @@ def main() -> int:
     parser.add_argument(
         "--heatmap-range-mode",
         type=str,
-        default="auto",
+        default="full",
         choices=["auto", "full", "bbox"],
-        help="热力图范围选择：auto=超大时回退 bbox；full=全范围；bbox=固定中国附近范围（默认：auto）",
+        help="热力图范围选择：full=按数据 min/max；bbox=固定中国附近范围；auto=超大时回退 bbox（默认：full）",
     )
     parser.add_argument(
         "--heatmap-max-cells",
         type=int,
-        default=250_000_000,
-        help="热力图最大像素数上限（用于 auto 决策，默认：250,000,000）",
+        default=16_000_000,
+        help="热力图最大像素数上限（超过会自动增大 step；默认：16,000,000）",
     )
     parser.add_argument("--heatmap-lon-min", type=float, default=None)
     parser.add_argument("--heatmap-lon-max", type=float, default=None)
@@ -544,6 +967,49 @@ def main() -> int:
         default="linear",
         choices=["linear", "log", "eq_hist"],
         help="热力图颜色映射方式（默认：linear）",
+    )
+    parser.add_argument(
+        "--heatmap-mean-altitude",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="是否输出经纬-平均高度热力图（默认：开启）",
+    )
+    parser.add_argument(
+        "--heatmap-alt-min",
+        type=float,
+        default=DEFAULT_PLOT_XLIMS["altitude"][0],
+        help="经纬-高度热力图的高度下限（ft，默认与绘图裁剪一致）",
+    )
+    parser.add_argument(
+        "--heatmap-alt-max",
+        type=float,
+        default=DEFAULT_PLOT_XLIMS["altitude"][1],
+        help="经纬-高度热力图的高度上限（ft，默认与绘图裁剪一致）",
+    )
+    parser.add_argument(
+        "--heatmap-alt-color-scale",
+        type=str,
+        default="linear",
+        choices=["linear", "log", "eq_hist"],
+        help="经纬-平均高度热力图颜色映射方式（默认：linear）",
+    )
+    parser.add_argument(
+        "--heatmap-dynspread",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="是否对稀疏点做 dynspread 增强可见性（默认：开启）",
+    )
+    parser.add_argument(
+        "--heatmap-dynspread-threshold",
+        type=float,
+        default=0.5,
+        help="dynspread threshold（默认：0.5）",
+    )
+    parser.add_argument(
+        "--heatmap-dynspread-max-px",
+        type=int,
+        default=3,
+        help="dynspread max_px（默认：3）",
     )
     args = parser.parse_args()
 
@@ -557,7 +1023,23 @@ def main() -> int:
 
     parquet0 = pq.ParquetFile(str(files[0]))
     available_cols = set(parquet0.schema.names)
-    columns = [c for c in DEFAULT_BIN_WIDTHS.keys() if c in available_cols]
+
+    bin_widths: Dict[str, float] = dict(DEFAULT_BIN_WIDTHS)
+    for item in args.bin_width:
+        parts = item.split(":")
+        if len(parts) != 2:
+            raise ValueError(f"--bin-width 格式错误: {item}（期望 <col>:<width>）")
+        col, width_s = parts
+        if col not in bin_widths:
+            raise ValueError(
+                f"--bin-width 不支持列: {col}（可选：{sorted(bin_widths.keys())}）"
+            )
+        width = float(width_s)
+        if not (width > 0):
+            raise ValueError(f"--bin-width 宽度必须为正数: {item}")
+        bin_widths[col] = width
+
+    columns = [c for c in bin_widths.keys() if c in available_cols]
     if not columns:
         raise RuntimeError(f"在 {files[0].name} 中未找到任何目标列（可用列：{sorted(available_cols)}）")
 
@@ -573,7 +1055,25 @@ def main() -> int:
     print(f"[INFO] out_dir={out_dir}")
 
     scanned_files, total_rows_meta, meta_stats = _scan_column_min_max(files, columns)
-    specs = _build_hist_specs(columns, DEFAULT_BIN_WIDTHS, meta_stats)
+    specs = _build_hist_specs(columns, bin_widths, meta_stats)
+
+    delta_specs: List[DeltaHistogramSpec] = []
+    required_dt_ns = int(round(args.delta_required_dt_seconds * 1e9))
+    if args.delta_hist:
+        need_cols = {"flight_id", "timestamp"}
+        if not need_cols.issubset(available_cols):
+            print(
+                f"[WARN] 缺少 {sorted(need_cols - available_cols)}，无法计算 delta-hist，已自动跳过"
+            )
+        else:
+            delta_specs = _build_delta_specs(
+                available_cols, args.delta_bin_width, args.delta_max
+            )
+    if delta_specs:
+        print(f"[INFO] delta_hist_columns={[s.column for s in delta_specs]}")
+        print(
+            f"[INFO] delta_required_dt_seconds={args.delta_required_dt_seconds} (ns={required_dt_ns})"
+        )
 
     chunks = _split_into_chunks(files, args.workers)
     print(f"[INFO] chunk_count={len(chunks)}")
@@ -584,11 +1084,21 @@ def main() -> int:
     total_sums = np.zeros(len(specs), dtype=np.float64)
     total_sumsq = np.zeros(len(specs), dtype=np.float64)
     total_oor = np.zeros(len(specs), dtype=np.int64)
+    total_delta_counts = [np.zeros(spec.bins, dtype=np.uint64) for spec in delta_specs]
+    total_delta_valid = np.zeros(len(delta_specs), dtype=np.int64)
+    total_delta_missing = np.zeros(len(delta_specs), dtype=np.int64)
+    total_delta_sums = np.zeros(len(delta_specs), dtype=np.float64)
+    total_delta_sumsq = np.zeros(len(delta_specs), dtype=np.float64)
+    total_delta_oor = np.zeros(len(delta_specs), dtype=np.int64)
+    total_delta_pairs = 0
     total_rows = 0
 
     with ProcessPoolExecutor(max_workers=len(chunks)) as executor:
         futures = [
-            executor.submit(_process_file_chunk, (chunk, specs, args.batch_size))
+            executor.submit(
+                _process_file_chunk,
+                (chunk, specs, delta_specs, args.batch_size, required_dt_ns),
+            )
             for chunk in chunks
         ]
         for future in as_completed(futures):
@@ -601,55 +1111,22 @@ def main() -> int:
             total_oor += result.out_of_range
             for idx in range(len(specs)):
                 total_counts[idx] += result.counts[idx]
+            if delta_specs:
+                total_delta_valid += result.delta_valid
+                total_delta_missing += result.delta_missing
+                total_delta_sums += result.delta_sums
+                total_delta_sumsq += result.delta_sumsq
+                total_delta_oor += result.delta_out_of_range
+                total_delta_pairs += int(result.delta_pairs_total)
+                for idx in range(len(delta_specs)):
+                    total_delta_counts[idx] += result.delta_counts[idx]
 
     if total_rows != total_rows_meta:
         print(
             f"[WARN] total_rows(meta)={total_rows_meta}, total_rows(read)={total_rows}，两者不一致"
         )
 
-    meta = {
-        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "data_dir": str(data_dir),
-        "files": [p.name for p in files[:5]] + (["..."] if len(files) > 5 else []),
-        "files_count": len(files),
-        "files_scanned_for_meta": scanned_files,
-        "total_rows": total_rows,
-        "date_from": args.date_from,
-        "date_to": args.date_to,
-        "workers": args.workers,
-        "batch_size": args.batch_size,
-        "histograms": {
-            spec.column: {
-                "unit": UNITS.get(spec.column, ""),
-                **asdict(spec),
-                **asdict(meta_stats[spec.column]),
-            }
-            for spec in specs
-        },
-    }
-    (out_dir / "hist_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
-
-    np.savez_compressed(
-        out_dir / "hist_counts.npz",
-        **{spec.column: total_counts[idx] for idx, spec in enumerate(specs)},
-    )
-    _write_summary_csv(
-        out_dir / "summary.csv",
-        specs,
-        meta_stats,
-        total_rows,
-        total_counts,
-        total_valid,
-        total_missing,
-        total_sums,
-        total_sumsq,
-        total_oor,
-    )
-
-    if not args.no_hist_plots:
-        _plot_histograms(out_dir, specs, total_counts)
-        print("[INFO] 已生成 1D 直方图 PNG：hist_<col>.png")
-
+    heatmap_config = None
     if not args.no_heatmap and ("latitude" in available_cols and "longitude" in available_cols):
         lon_min, lon_max, lat_min, lat_max, range_mode_used = _choose_heatmap_range(
             args.heatmap_range_mode,
@@ -665,34 +1142,225 @@ def main() -> int:
             lat_min_arg=args.heatmap_lat_min,
             lat_max_arg=args.heatmap_lat_max,
         )
-        cells = (
-            int(math.floor((lon_max - lon_min) / args.heatmap_lon_step + 1e-12)) + 1
-        ) * (int(math.floor((lat_max - lat_min) / args.heatmap_lat_step + 1e-12)) + 1)
-        if cells > args.heatmap_max_cells and args.heatmap_range_mode == "auto":
-            print(
-                f"[WARN] heatmap 像素数过大（{cells}），已使用 bbox 回退（如需全范围请改用 --heatmap-range-mode full 或增大 --heatmap-max-cells）"
-            )
+        step_x, step_y, plot_w, plot_h, cells, scale = _adjust_heatmap_steps_for_max_cells(
+            (lon_min, lon_max),
+            (lat_min, lat_max),
+            args.heatmap_lon_step,
+            args.heatmap_lat_step,
+            args.heatmap_max_cells,
+        )
+        heatmap_config = {
+            "range_mode": range_mode_used,
+            "lon_min": lon_min,
+            "lon_max": lon_max,
+            "lat_min": lat_min,
+            "lat_max": lat_max,
+            "lon_step_requested": args.heatmap_lon_step,
+            "lat_step_requested": args.heatmap_lat_step,
+            "lon_step_effective": step_x,
+            "lat_step_effective": step_y,
+            "plot_width": plot_w,
+            "plot_height": plot_h,
+            "cells": cells,
+            "max_cells": args.heatmap_max_cells,
+            "scale_from_requested": scale,
+            "color_scale": args.heatmap_color_scale,
+            "mean_altitude": args.heatmap_mean_altitude,
+            "alt_min": args.heatmap_alt_min,
+            "alt_max": args.heatmap_alt_max,
+            "alt_color_scale": args.heatmap_alt_color_scale,
+            "dynspread": args.heatmap_dynspread,
+            "dynspread_threshold": args.heatmap_dynspread_threshold,
+            "dynspread_max_px": args.heatmap_dynspread_max_px,
+        }
 
+    meta = {
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "data_dir": str(data_dir),
+        "files": [p.name for p in files[:5]] + (["..."] if len(files) > 5 else []),
+        "files_count": len(files),
+        "files_scanned_for_meta": scanned_files,
+        "total_rows": total_rows,
+        "date_from": args.date_from,
+        "date_to": args.date_to,
+        "workers": args.workers,
+        "batch_size": args.batch_size,
+        "bin_width_override": args.bin_width,
+        "histograms": {
+            spec.column: {
+                "unit": UNITS.get(spec.column, ""),
+                **asdict(spec),
+                **asdict(meta_stats[spec.column]),
+            }
+            for spec in specs
+        },
+    }
+    if delta_specs:
+        meta["delta_histograms"] = {
+            spec.column: {
+                "unit": UNITS.get(spec.column, ""),
+                **asdict(spec),
+                "required_dt_seconds": args.delta_required_dt_seconds,
+                "required_dt_ns": required_dt_ns,
+            }
+            for spec in delta_specs
+        }
+        meta["delta_pairs_total"] = int(total_delta_pairs)
+    meta["hist_plot"] = {
+        "yscales": [s.strip() for s in args.hist_yscales.split(",") if s.strip()],
+        "default_xlims": DEFAULT_PLOT_XLIMS,
+        "xlims_override": args.plot_xlim,
+    }
+    if heatmap_config is not None:
+        meta["heatmap_lat_lon"] = heatmap_config
+    (out_dir / "hist_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+
+    legacy_npz = out_dir / "hist_counts.npz"
+    if legacy_npz.exists():
+        legacy_npz.unlink()
+    _write_summary_csv(
+        out_dir / "summary.csv",
+        specs,
+        meta_stats,
+        total_rows,
+        total_counts,
+        total_valid,
+        total_missing,
+        total_sums,
+        total_sumsq,
+        total_oor,
+    )
+    combined_specs: List[HistogramSpec] = list(specs)
+    combined_counts: List[np.ndarray] = list(total_counts)
+    if delta_specs:
+        combined_specs.extend(
+            [
+                HistogramSpec(
+                    column=s.column,
+                    start=s.start,
+                    width=s.width,
+                    bins=s.bins,
+                )
+                for s in delta_specs
+            ]
+        )
+        combined_counts.extend(list(total_delta_counts))
+        delta_summary_path = out_dir / "delta_summary.csv"
+        with delta_summary_path.open("w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                [
+                    "column",
+                    "source_column",
+                    "unit",
+                    "bin_width",
+                    "start",
+                    "bins",
+                    "required_dt_seconds",
+                    "pairs_total",
+                    "valid",
+                    "missing",
+                    "mean",
+                    "std",
+                    "out_of_range",
+                ]
+            )
+            for idx, spec in enumerate(delta_specs):
+                v = int(total_delta_valid[idx])
+                m = int(total_delta_missing[idx])
+                oor = int(total_delta_oor[idx])
+                mean = float(total_delta_sums[idx] / v) if v else float("nan")
+                var = float(total_delta_sumsq[idx] / v - mean * mean) if v else float(
+                    "nan"
+                )
+                std = float(math.sqrt(var)) if v and var >= 0 else float("nan")
+                writer.writerow(
+                    [
+                        spec.column,
+                        spec.source_column,
+                        UNITS.get(spec.column, ""),
+                        spec.width,
+                        spec.start,
+                        spec.bins,
+                        args.delta_required_dt_seconds,
+                        int(total_delta_pairs),
+                        v,
+                        m,
+                        mean,
+                        std,
+                        oor,
+                    ]
+                )
+
+    _write_hist_counts_csv(out_dir / "hist_counts.csv", combined_specs, combined_counts)
+
+    if not args.no_hist_plots:
+        yscales = [s.strip() for s in args.hist_yscales.split(",") if s.strip()]
+        invalid = [s for s in yscales if s not in {"linear", "log"}]
+        if invalid:
+            raise ValueError(f"--hist-yscales 不支持: {invalid}（可选：linear,log）")
+
+        xlims: Dict[str, Tuple[float, float]] = dict(DEFAULT_PLOT_XLIMS)
+        for item in args.plot_xlim:
+            parts = item.split(":")
+            if len(parts) != 3:
+                raise ValueError(f"--plot-xlim 格式错误: {item}（期望 <col>:<min>:<max>）")
+            col, lo_s, hi_s = parts
+            xlims[col] = (float(lo_s), float(hi_s))
+
+        for yscale in yscales:
+            plot_dir = out_dir / f"hist_y_{yscale}"
+            _plot_histograms(
+                plot_dir, combined_specs, combined_counts, yscale=yscale, xlims=xlims
+            )
+        if "linear" in yscales:
+            _ensure_root_linear_hist_links(out_dir, combined_specs)
+        print("[INFO] 已生成 1D 直方图 PNG：hist_y_linear/ 与 hist_y_log/（根目录 hist_<col>.png 指向线性版）")
+
+    if heatmap_config is not None:
         print(
             "[INFO] heatmap range "
-            f"mode={range_mode_used}, lon=[{lon_min},{lon_max}], lat=[{lat_min},{lat_max}], step=({args.heatmap_lon_step},{args.heatmap_lat_step})"
+            f"mode={heatmap_config['range_mode']}, "
+            f"lon=[{heatmap_config['lon_min']},{heatmap_config['lon_max']}], "
+            f"lat=[{heatmap_config['lat_min']},{heatmap_config['lat_max']}]"
         )
+        if heatmap_config["cells"] > heatmap_config["max_cells"]:
+            print(
+                f"[WARN] heatmap cells={heatmap_config['cells']} 仍超过上限={heatmap_config['max_cells']}（将继续增大 step 或缩小范围）"
+            )
+        if heatmap_config["scale_from_requested"] > 1.0 + 1e-9:
+            print(
+                "[INFO] heatmap step 过细，已自动增大："
+                f"({heatmap_config['lon_step_requested']},{heatmap_config['lat_step_requested']})"
+                f" -> ({heatmap_config['lon_step_effective']:.6f},{heatmap_config['lat_step_effective']:.6f})"
+                f" 以满足 max_cells={heatmap_config['max_cells']}（plot={heatmap_config['plot_width']}x{heatmap_config['plot_height']}）"
+            )
         _render_lat_lon_heatmap(
             out_dir,
             files,
             lon_col="longitude",
             lat_col="latitude",
-            lon_range=(lon_min, lon_max),
-            lat_range=(lat_min, lat_max),
-            lon_step=args.heatmap_lon_step,
-            lat_step=args.heatmap_lat_step,
-            color_scale=args.heatmap_color_scale,
+            alt_col="altitude" if "altitude" in available_cols else None,
+            mean_altitude=heatmap_config["mean_altitude"],
+            alt_min=heatmap_config["alt_min"],
+            alt_max=heatmap_config["alt_max"],
+            lon_range=(heatmap_config["lon_min"], heatmap_config["lon_max"]),
+            lat_range=(heatmap_config["lat_min"], heatmap_config["lat_max"]),
+            plot_width=heatmap_config["plot_width"],
+            plot_height=heatmap_config["plot_height"],
+            color_scale=heatmap_config["color_scale"],
+            mean_alt_color_scale=heatmap_config["alt_color_scale"],
+            dynspread=heatmap_config["dynspread"],
+            dynspread_threshold=heatmap_config["dynspread_threshold"],
+            dynspread_max_px=heatmap_config["dynspread_max_px"],
         )
         print("[INFO] 已生成 2D 热力图 PNG：heatmap_lat_lon.png")
+        if heatmap_config["mean_altitude"] and "altitude" in available_cols:
+            print("[INFO] 已生成经纬-平均高度热力图：heatmap_lat_lon_mean_altitude.png")
     elif not args.no_heatmap:
         print("[INFO] 数据中不存在 latitude/longitude，跳过 2D 热力图")
 
-    print("[INFO] done (已生成 hist_meta.json / hist_counts.npz / summary.csv)")
+    print("[INFO] done (已生成 hist_meta.json / hist_counts.csv / summary.csv)")
     return 0
 
 

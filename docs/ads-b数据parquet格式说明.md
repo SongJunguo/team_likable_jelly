@@ -23,21 +23,23 @@
 
 ### 2.1 轨迹基础字段（raw / filtered / segmented / interpolated 均存在）
 
-| 字段 | 含义 | 单位 |
-|---|---|---|
-| `timestamp` | 轨迹点时间戳（UTC） | `datetime64[ns, UTC]` |
-| `latitude` | 纬度 | °（十进制度） |
-| `longitude` | 经度 | °（十进制度） |
-| `altitude` | ADS‑B 报告高度 | ft |
-| `groundspeed` | 对地速度 | kt |
-| `track` | 航迹角（地面航向） | °（十进制度） |
-| `vertical_rate` | 爬升/下降率 | ft/min |
-| `u_component_of_wind` | 风 U 分量（向东为正） | m/s |
-| `v_component_of_wind` | 风 V 分量（向北为正） | m/s |
-| `temperature` | 环境温度 | K |
-| `specific_humidity` | 比湿 | kg/kg |
+| 字段 | 含义 | 单位 | 分辨率 |
+|---|---|---|---|
+| `timestamp` | 轨迹点时间戳（UTC） | `datetime64[ns, UTC]` | 1 s|
+| `latitude` | 纬度 | °（十进制度） |  |
+| `longitude` | 经度 | °（十进制度） | |
+| `altitude` | ADS‑B 报告高度 | ft | 25 ft |
+| `groundspeed` | 对地速度 | kt | 1 kt |
+| `track` | 航迹角（地面航向） | °（十进制度） | 
+| `vertical_rate` | 爬升/下降率 | ft/min | 16 ft/min |
+| `u_component_of_wind` | 风 U 分量（向东为正） | m/s | |
+| `v_component_of_wind` | 风 V 分量（向北为正） | m/s | |
+| `temperature` | 环境温度 | K | |
+| `specific_humidity` | 比湿 | kg/kg | |
 
-注意: altitude 精度为 25ft
+注意: altitude 精度为 25ft。
+主要巡航尖峰（1–2 月合并 Top）：37000/36000/38000/35000/39000/34000/40000/33000/32000/41000 ft，主间隔约 1000ft，并伴随 ±25ft 的次峰（如 36975/37000/37025）
+
 
 ### 2.2 标识字段（注意 `flight_id` 的语义会在切分后变化）
 
@@ -168,21 +170,31 @@
 
 脚本会在 `reports/data_distributions/<label>/<date_from__date_to>/` 下输出：
 
-- `hist_counts.npz`：每个字段的 1D 直方图计数（key=列名）
+- `hist_counts.csv`：所有字段（含 delta_* 派生字段）的 1D 直方图计数（长表；包含 count=0 的 bin，便于观察尖峰/间隔）
 - `hist_meta.json`：直方图配置（bin 宽度、起点、bins 数）与元数据 min/max
 - `summary.csv`：每列的 valid/missing/mean/std 等汇总
-- `hist_<col>.png`：每列 1D 直方图（y 轴线性）
-- `heatmap_lat_lon.png`：`latitude/longitude` 2D 热力图（若两列存在且未禁用）
+- `delta_summary.csv`：delta 直方图的 pairs/mean/std 等汇总（仅当开启 delta-hist 且数据中存在 `flight_id/timestamp` 时输出）
+- `hist_y_linear/hist_<col>.png`：每列 1D 直方图（y 轴线性）
+- `hist_y_log/hist_<col>.png`：每列 1D 直方图（y 轴对数）
+- `hist_<col>.png`：线性版（兼容旧路径；通常为指向 `hist_y_linear/` 的链接）
+- `heatmap_lat_lon.png`：`latitude/longitude` 2D 热力图（点密度）
+- `heatmap_lat_lon_mean_altitude.png`：经纬-平均高度热力图（若存在 `altitude` 且未禁用）
 
 ### 8.2 默认 bin / 网格分辨率（可按需用 CLI 参数覆盖）
 
 - `altitude`：25 ft
 - `vertical_rate`：32 ft/min
+- `track`：0.01°
 - `u_component_of_wind` / `v_component_of_wind` / `wind`：0.05 m/s（仅当列存在时统计）
 - `temperature`：0.05 K
 - `latitude` / `longitude`（1D）：0.001°
-- `latitude/longitude`（2D heatmap）：0.005°
-- 直方图 y 轴：线性（`count`）
+- `latitude/longitude`（2D heatmap）：0.005°（若像素数过大，会自动增大 step 以满足 `--heatmap-max-cells` 上限）
+- 直方图 y 轴：默认同时输出线性与对数（`--hist-yscales linear,log`）
+- 直方图绘图默认 x 轴裁剪（不影响 `hist_counts.csv` 统计本身，可用 `--plot-xlim` 覆盖）：
+  - `groundspeed`：[0, 700] kt
+  - `altitude`：[-1000, 45000] ft
+  - `vertical_rate` / `daltitude`：[-5000, 5000] ft/min
+- delta（相邻点差值）直方图：默认开启（`--delta-hist`），只在同一 `flight_id` 内且 `timestamp` 差值**严格为 1 秒**的相邻点上计算（可用 `--delta-required-dt-seconds` 覆盖）
 
 ### 8.3 常用命令示例
 
@@ -208,11 +220,48 @@ python analysis/plot_adsb_parquet_distributions.py \
   --date-from 2022-01-01 --date-to 2022-01-01
 ```
 
-热力图范围控制（默认 `--heatmap-range-mode auto`，若全范围像素过大则回退到中国附近 bbox：lon=[70,140], lat=[0,70]）：
+热力图范围控制（默认 `--heatmap-range-mode full` 使用数据 min/max；如只看中国附近可用 `bbox`；如希望超大时自动回退可用 `auto`。另外若像素数过大，脚本会自动增大 step 以满足 `--heatmap-max-cells` 上限，默认 16,000,000）：
 
 ```bash
 python analysis/plot_adsb_parquet_distributions.py \
   --data-dir opensky_2024_PRC_dataset/rawtrajectories \
   --date-from 2022-01-01 --date-to 2022-01-01 \
   --heatmap-range-mode full
+```
+
+仅输出线性 y 轴直方图，且把 `vertical_rate` 绘图范围收紧到 [-6000,6000]：
+
+```bash
+python analysis/plot_adsb_parquet_distributions.py \
+  --data-dir opensky_2024_PRC_dataset/rawtrajectories \
+  --date-from 2022-01-01 --date-to 2022-01-01 \
+  --hist-yscales linear \
+  --plot-xlim vertical_rate:-6000:6000
+```
+
+只为 `altitude` 临时尝试更细的 bin（例如 1 ft），避免修改默认配置：
+
+```bash
+python analysis/plot_adsb_parquet_distributions.py \
+  --data-dir opensky_2024_PRC_dataset/rawtrajectories \
+  --date-from 2022-01-01 --date-to 2022-01-01 \
+  --bin-width altitude:1
+```
+
+只为 `vertical_rate` 临时尝试更细的 bin（例如 1 ft/min）：
+
+```bash
+python analysis/plot_adsb_parquet_distributions.py \
+  --data-dir opensky_2024_PRC_dataset/rawtrajectories \
+  --date-from 2022-01-01 --date-to 2022-01-01 \
+  --bin-width vertical_rate:1
+```
+
+关闭 delta 直方图（只输出原始列的分布）：
+
+```bash
+python analysis/plot_adsb_parquet_distributions.py \
+  --data-dir opensky_2024_PRC_dataset/rawtrajectories \
+  --date-from 2022-01-01 --date-to 2022-01-01 \
+  --no-delta-hist
 ```
