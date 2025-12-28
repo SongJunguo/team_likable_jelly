@@ -43,13 +43,13 @@ export SMOOTH=1e-2              # csaps平滑系数
 # 注意：segment内部通过切分控制Δt≤MAX_DT，插值阶段再按MAX_HOLE_SIZE限制缺口
 
 # ========== 并发配置 ==========
-export FILTER_PROCS=4
+export FILTER_PROCS=8
 export SPLIT_PROCS=4
 export INTERP_PROCS=4
 export MAX_WORKERS=4 #用于检测raw和filter点数的差异
 # ========== 日期范围 ==========
 export DATE_FROM="2022-01-01"
-export DATE_TO="2022-01-31"
+export DATE_TO="2022-02-28"
 
 # ========== 质量检测参数 ==========
 export QUALITY_CHECK_PROCS=4

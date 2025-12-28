@@ -181,6 +181,8 @@
 - `heatmap_lat_lon_mean_altitude.png`：经纬-平均高度热力图（matplotlib 板式，colorbar 单位 ft；若存在 `altitude` 且未禁用）
 - `heatmap_lat_lon_mean_altitude_raw.png`：经纬-平均高度热力图（datashader 裸图，用于对比）
 
+注：热力图绘制依赖 `dask` 与 `datashader`，缺失时脚本会报错。
+
 ### 8.2 默认 bin / 网格分辨率（可按需用 CLI 参数覆盖）
 
 - `altitude`：25 ft
@@ -191,14 +193,18 @@
 - `latitude` / `longitude`（1D）：0.001°
 - `latitude/longitude`（2D heatmap）：0.005°（若像素数过大，会自动增大 step 以满足 `--heatmap-max-cells` 上限）
 - 直方图 y 轴：默认同时输出线性与对数（`--hist-yscales linear,log`）
-- 直方图 PNG DPI：默认 200（`--hist-dpi 200`）
-- 热力图 PNG DPI：默认 150（`--heatmap-dpi 150`）
+- 直方图 PNG DPI：默认 600（`--hist-dpi 600`）
+- 热力图 PNG DPI：默认 5000（`--heatmap-dpi 5000`）
 - 直方图绘图默认 x 轴裁剪（不影响 `hist_counts.csv` 统计本身，可用 `--plot-xlim` 覆盖）：
   - `groundspeed`：[0, 700] kt
   - `altitude`：[-1000, 45000] ft
   - `vertical_rate` / `daltitude`：[-5000, 5000] ft/min
-- delta（相邻点差值）直方图：默认开启（`--delta-hist`），只在同一 `flight_id` 内且 `timestamp` 差值**严格为 1 秒**的相邻点上计算（可用 `--delta-required-dt-seconds` 覆盖）
+- delta（相邻点差值）直方图：默认开启（`--delta-hist`），只在同一 `flight_id`（若不存在则使用 `original_flight_id`）内且 `timestamp` 差值**严格为 1 秒**的相邻点上计算（可用 `--delta-required-dt-seconds` 覆盖）
 - `delta_vertical_rate`：bin=1 ft/min，max=2000 ft/min（可用 `--delta-bin-width/--delta-max` 覆盖）
+- 航班过滤（可选）：`--flight-filter eu_meta` 仅统计起降机场都在欧洲（`continent=EU`）的轨迹。
+  - 自动选择 `flight_id` 列：优先 `original_flight_id`，其次 `flight_id`，也可用 `--flight-id-col` 强制指定。
+  - 过滤后 bins、热力图范围、统计结果均基于过滤数据计算。
+  - 若未指定 `--label`，输出目录默认追加 `_eu_meta` 以避免和全量混合。
 
 ### 8.3 常用命令示例
 
@@ -224,13 +230,45 @@ python analysis/plot_adsb_parquet_distributions.py \
   --date-from 2022-01-01 --date-to 2022-01-01
 ```
 
-热力图范围控制（默认 `--heatmap-range-mode full` 使用数据 min/max；如只看中国附近可用 `bbox`；如希望超大时自动回退可用 `auto`。另外若像素数过大，脚本会自动增大 step 以满足 `--heatmap-max-cells` 上限，默认 16,000,000）：
+一键脚本（可选过滤/多数据集）：
+
+```bash
+# 只跑欧洲起降航班（raw）
+bash analysis/run_distributions.sh \
+  --dataset raw \
+  --filter eu_meta \
+  --date-from 2022-01-01 --date-to 2022-01-01
+
+# 三个数据集全跑（不过滤）
+bash analysis/run_distributions.sh \
+  --dataset all \
+  --filter none \
+  --date-from 2022-01-01 --date-to 2022-01-01
+
+# 透传额外参数
+bash analysis/run_distributions.sh \
+  --dataset raw \
+  --filter eu_meta \
+  --date-from 2022-01-01 --date-to 2022-01-01 \
+  -- --no-heatmap
+```
+
+热力图范围控制（默认 `--heatmap-range-mode full` 使用数据 min/max；如只看中国附近可用 `bbox`；如希望超大时自动回退可用 `auto`。另外若像素数过大，脚本会自动增大 step 以满足 `--heatmap-max-cells` 上限，默认 60,000,000）：
 
 ```bash
 python analysis/plot_adsb_parquet_distributions.py \
   --data-dir opensky_2024_PRC_dataset/rawtrajectories \
   --date-from 2022-01-01 --date-to 2022-01-01 \
-  --heatmap-range-mode full
+ --heatmap-range-mode full
+```
+
+仅统计“起降都在欧洲且有 meta 信息”的轨迹（过滤后 bins 与热力图范围会随之更新）：
+
+```bash
+python analysis/plot_adsb_parquet_distributions.py \
+  --data-dir opensky_2024_PRC_dataset/rawtrajectories \
+  --date-from 2022-01-01 --date-to 2022-01-01 \
+  --flight-filter eu_meta
 ```
 
 仅输出线性 y 轴直方图，且把 `vertical_rate` 绘图范围收紧到 [-6000,6000]：

@@ -26,6 +26,11 @@ import pyarrow.parquet as pq
 
 DEFAULT_DATA_DIR = Path("opensky_2024_PRC_dataset/rawtrajectories")
 # DEFAULT_DATA_DIR = Path("opensky_2024_PRC_dataset/xue_processed_raw__v1")
+DEFAULT_FLIGHTS_META_PATH = Path(
+    "opensky_2024_PRC_dataset/flights/challenge_set.parquet"
+)
+DEFAULT_AIRPORTS_META_PATH = Path("opensky_2024_PRC_dataset/airports_tz.parquet")
+DEFAULT_EUROPE_CONTINENT = "EU"
 
 
 # 默认仅关注“物理意义明确”的列；只要列在源数据中存在，就会被统计。
@@ -183,6 +188,86 @@ def _safe_float(value) -> Optional[float]:
     return None
 
 
+def _load_eu_flight_ids(
+    flights_path: Path, airports_path: Path, europe_continent: str
+) -> np.ndarray:
+    airports = pq.read_table(airports_path, columns=["icao_code", "continent"])
+    airports_dict = airports.to_pydict()
+    eu_airports = {
+        code
+        for code, cont in zip(airports_dict["icao_code"], airports_dict["continent"])
+        if code and cont == europe_continent
+    }
+
+    flights = pq.read_table(flights_path, columns=["flight_id", "adep", "ades"])
+    flights_dict = flights.to_pydict()
+    allowed: List[int] = []
+    for fid, adep, ades in zip(
+        flights_dict["flight_id"], flights_dict["adep"], flights_dict["ades"]
+    ):
+        if fid is None:
+            continue
+        if adep in eu_airports and ades in eu_airports:
+            allowed.append(int(fid))
+    return np.array(allowed, dtype=np.int64)
+
+
+def _scan_column_min_max_filtered(
+    files: Sequence[Path],
+    columns: Sequence[str],
+    flight_id_col: str,
+    allowed_ids: np.ndarray,
+    batch_size: int,
+) -> Tuple[int, int, Dict[str, ColumnMetaStats]]:
+    total_rows = 0
+    files_scanned = 0
+    min_values: Dict[str, Optional[float]] = {c: None for c in columns}
+    max_values: Dict[str, Optional[float]] = {c: None for c in columns}
+
+    for file_path in files:
+        parquet = pq.ParquetFile(str(file_path))
+        files_scanned += 1
+        read_columns = [flight_id_col] + list(columns)
+        for batch in parquet.iter_batches(columns=read_columns, batch_size=batch_size):
+            fid = batch.column(0).to_numpy(zero_copy_only=False)
+            if fid.size == 0:
+                continue
+            if fid.dtype.kind not in {"i", "u"}:
+                fid = fid.astype(np.int64, copy=False)
+            allowed_mask = np.isin(fid, allowed_ids)
+            if not allowed_mask.any():
+                continue
+            total_rows += int(allowed_mask.sum())
+            for idx, col in enumerate(columns, start=1):
+                arr = batch.column(idx).to_numpy(zero_copy_only=False)
+                arr = arr[allowed_mask]
+                if arr.size == 0:
+                    continue
+                finite_mask = np.isfinite(arr)
+                if not finite_mask.any():
+                    continue
+                values = arr[finite_mask].astype(np.float64, copy=False)
+                lo = float(values.min())
+                hi = float(values.max())
+                cur_min = min_values[col]
+                cur_max = max_values[col]
+                min_values[col] = lo if cur_min is None else min(cur_min, lo)
+                max_values[col] = hi if cur_max is None else max(cur_max, hi)
+
+    if total_rows == 0:
+        raise RuntimeError("过滤后无有效轨迹点，无法统计分布")
+
+    out: Dict[str, ColumnMetaStats] = {}
+    for col in columns:
+        lo = min_values[col]
+        hi = max_values[col]
+        if lo is None or hi is None:
+            raise RuntimeError(f"过滤后列 {col} 无有效数据，无法生成直方图")
+        out[col] = ColumnMetaStats(min_value=lo, max_value=hi)
+
+    return files_scanned, total_rows, out
+
+
 def _scan_column_min_max(
     files: Sequence[Path], columns: Sequence[str]
 ) -> Tuple[int, int, Dict[str, ColumnMetaStats]]:
@@ -252,11 +337,32 @@ def _build_hist_specs(
 
 
 def _process_file_chunk(
-    args: Tuple[List[str], List[HistogramSpec], List[DeltaHistogramSpec], int, int]
+    args: Tuple[
+        List[str],
+        List[HistogramSpec],
+        List[DeltaHistogramSpec],
+        int,
+        int,
+        Optional[np.ndarray],
+        Optional[str],
+        Optional[str],
+    ]
 ) -> ChunkResult:
-    file_paths, specs, delta_specs, batch_size, required_dt_ns = args
+    (
+        file_paths,
+        specs,
+        delta_specs,
+        batch_size,
+        required_dt_ns,
+        allowed_ids,
+        flight_id_col,
+        delta_fid_col,
+    ) = args
     columns_hist = [spec.column for spec in specs]
     delta_enabled = bool(delta_specs)
+    filter_enabled = allowed_ids is not None
+    if delta_enabled and not delta_fid_col:
+        raise RuntimeError("delta_fid_col 为空，无法计算 delta-hist")
 
     counts = [np.zeros(spec.bins, dtype=np.uint64) for spec in specs]
     valid = np.zeros(len(specs), dtype=np.int64)
@@ -275,11 +381,14 @@ def _process_file_chunk(
 
     for file_path_str in file_paths:
         parquet = pq.ParquetFile(file_path_str)
-        total_rows += parquet.metadata.num_rows
 
         read_columns = list(columns_hist)
+        if filter_enabled:
+            if flight_id_col is None:
+                raise RuntimeError("flight_id_col 为空，无法做轨迹过滤")
+            read_columns.append(flight_id_col)
         if delta_enabled:
-            read_columns.extend(["flight_id", "timestamp"])
+            read_columns.extend([delta_fid_col, "timestamp"])
             read_columns.extend([spec.source_column for spec in delta_specs])
         read_columns = sorted(set(read_columns))
         col_to_idx = {col: idx for idx, col in enumerate(read_columns)}
@@ -294,8 +403,23 @@ def _process_file_chunk(
                 for col in read_columns
             }
 
+            allowed_mask = None
+            if filter_enabled:
+                fid_for_filter = arrays[flight_id_col]
+                if fid_for_filter.dtype.kind not in {"i", "u"}:
+                    fid_for_filter = fid_for_filter.astype(np.int64, copy=False)
+                allowed_mask = np.isin(fid_for_filter, allowed_ids)
+                if not allowed_mask.any():
+                    continue
+                total_rows += int(allowed_mask.sum())
+            else:
+                sample_arr = arrays[columns_hist[0]] if columns_hist else arrays[delta_fid_col]
+                total_rows += int(sample_arr.size)
+
             for idx, spec in enumerate(specs):
                 arr = arrays[spec.column]
+                if allowed_mask is not None:
+                    arr = arr[allowed_mask]
                 if arr.size == 0:
                     continue
                 finite_mask = np.isfinite(arr)
@@ -323,12 +447,19 @@ def _process_file_chunk(
                 sumsq[idx] += float(np.square(values, dtype=np.float64).sum(dtype=np.float64))
 
             if delta_enabled:
-                fid = arrays["flight_id"]
+                fid = arrays[delta_fid_col]
                 ts = arrays["timestamp"]
+                if allowed_mask is not None:
+                    fid = fid[allowed_mask]
+                    ts = ts[allowed_mask]
                 if fid.size == 0:
                     continue
                 if fid.size != ts.size:
-                    raise RuntimeError("flight_id 与 timestamp 行数不一致，无法计算 delta-hist")
+                    raise RuntimeError(
+                        f"{delta_fid_col} 与 timestamp 行数不一致，无法计算 delta-hist"
+                    )
+                if fid.dtype.kind not in {"i", "u"}:
+                    fid = fid.astype(np.int64, copy=False)
 
                 fid_prev = fid[:-1]
                 fid_curr = fid[1:]
@@ -349,6 +480,8 @@ def _process_file_chunk(
 
                 for d_idx, dspec in enumerate(delta_specs):
                     arr = arrays[dspec.source_column].astype(np.float64, copy=False)
+                    if allowed_mask is not None:
+                        arr = arr[allowed_mask]
 
                     val_prev = arr[:-1]
                     val_curr = arr[1:]
@@ -712,6 +845,8 @@ def _render_lat_lon_heatmap(
     dynspread: bool,
     dynspread_threshold: float,
     dynspread_max_px: int,
+    allowed_ids: Optional[np.ndarray],
+    flight_id_col: Optional[str],
 ) -> None:
     try:
         import dask.dataframe as dd
@@ -738,6 +873,10 @@ def _render_lat_lon_heatmap(
         raise ValueError(f"heatmap dpi 必须为正数: {dpi}")
 
     columns = [lon_col, lat_col]
+    if allowed_ids is not None:
+        if not flight_id_col:
+            raise RuntimeError("flight_id_col 为空，无法过滤热力图")
+        columns.append(flight_id_col)
     alt_clip_col = "__altitude_clipped_for_heatmap"
     enable_mean_alt = bool(mean_altitude and alt_col)
     if enable_mean_alt:
@@ -748,6 +887,8 @@ def _render_lat_lon_heatmap(
         columns=columns,
         engine="pyarrow",
     ).dropna(subset=[lon_col, lat_col])
+    if allowed_ids is not None:
+        ddf = ddf[ddf[flight_id_col].isin(allowed_ids)]
     ddf = ddf[
         (ddf[lon_col] >= lon_min)
         & (ddf[lon_col] <= lon_max)
@@ -975,6 +1116,37 @@ def main() -> int:
         help="输出根目录（默认：reports/data_distributions）",
     )
     parser.add_argument("--label", type=str, default=None, help="输出子目录名（默认：data-dir 名）")
+    parser.add_argument(
+        "--flight-filter",
+        type=str,
+        default="eu_meta",
+        choices=["none", "eu_meta"],
+        help="按航班元数据过滤：none=不过滤，eu_meta=起降均在欧洲",
+    )
+    parser.add_argument(
+        "--flights-meta-path",
+        type=Path,
+        default=DEFAULT_FLIGHTS_META_PATH,
+        help="航班元数据路径（默认：opensky_2024_PRC_dataset/flights/challenge_set.parquet）",
+    )
+    parser.add_argument(
+        "--airports-meta-path",
+        type=Path,
+        default=DEFAULT_AIRPORTS_META_PATH,
+        help="机场元数据路径（默认：opensky_2024_PRC_dataset/airports_tz.parquet）",
+    )
+    parser.add_argument(
+        "--europe-continent",
+        type=str,
+        default=DEFAULT_EUROPE_CONTINENT,
+        help="欧洲 continent 标记（默认：EU）",
+    )
+    parser.add_argument(
+        "--flight-id-col",
+        type=str,
+        default=None,
+        help="过滤时使用的航班 ID 列（默认自动：优先 original_flight_id）",
+    )
     parser.add_argument("--date-from", type=str, default="2022-01-01", help="起始日期 YYYY-MM-DD（含）")
     parser.add_argument("--date-to", type=str, default="2022-02-28", help="结束日期 YYYY-MM-DD（含）")
     parser.add_argument(
@@ -1145,6 +1317,35 @@ def main() -> int:
     parquet0 = pq.ParquetFile(str(files[0]))
     available_cols = set(parquet0.schema.names)
 
+    if args.flight_id_col is not None and args.flight_id_col not in available_cols:
+        raise RuntimeError(
+            f"--flight-id-col 指定列不存在: {args.flight_id_col}（可用列：{sorted(available_cols)}）"
+        )
+
+    filter_enabled = args.flight_filter != "none"
+    allowed_ids: Optional[np.ndarray] = None
+    flight_id_col: Optional[str] = None
+    if filter_enabled:
+        if not args.flights_meta_path.exists():
+            raise FileNotFoundError(f"航班元数据不存在: {args.flights_meta_path}")
+        if not args.airports_meta_path.exists():
+            raise FileNotFoundError(f"机场元数据不存在: {args.airports_meta_path}")
+        if args.flight_id_col is not None:
+            flight_id_col = args.flight_id_col
+        elif "original_flight_id" in available_cols:
+            flight_id_col = "original_flight_id"
+        elif "flight_id" in available_cols:
+            flight_id_col = "flight_id"
+        else:
+            raise RuntimeError(
+                "启用 flight-filter 需要 flight_id/original_flight_id 列"
+            )
+        allowed_ids = _load_eu_flight_ids(
+            args.flights_meta_path, args.airports_meta_path, args.europe_continent
+        )
+        if allowed_ids.size == 0:
+            raise RuntimeError("flight-filter 结果为空，无法继续统计")
+
     bin_widths: Dict[str, float] = dict(DEFAULT_BIN_WIDTHS)
     for item in args.bin_width:
         parts = item.split(":")
@@ -1165,6 +1366,8 @@ def main() -> int:
         raise RuntimeError(f"在 {files[0].name} 中未找到任何目标列（可用列：{sorted(available_cols)}）")
 
     label = args.label or data_dir.name
+    if filter_enabled and args.label is None:
+        label = f"{label}_{args.flight_filter}"
     range_tag = f"{args.date_from or 'all'}__{args.date_to or 'all'}"
     out_dir = args.out_root / label / range_tag
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1174,27 +1377,49 @@ def main() -> int:
     print(f"[INFO] columns={columns}")
     print(f"[INFO] workers={args.workers}, batch_size={args.batch_size}")
     print(f"[INFO] out_dir={out_dir}")
+    if filter_enabled:
+        print(
+            "[INFO] flight_filter="
+            f"{args.flight_filter}, flight_id_col={flight_id_col}, "
+            f"allowed_ids={allowed_ids.size}"
+        )
 
-    scanned_files, total_rows_meta, meta_stats = _scan_column_min_max(files, columns)
+    if filter_enabled:
+        scanned_files, total_rows_meta, meta_stats = _scan_column_min_max_filtered(
+            files, columns, flight_id_col, allowed_ids, args.batch_size
+        )
+    else:
+        scanned_files, total_rows_meta, meta_stats = _scan_column_min_max(files, columns)
     specs = _build_hist_specs(columns, bin_widths, meta_stats)
 
     delta_specs: List[DeltaHistogramSpec] = []
     required_dt_ns = int(round(args.delta_required_dt_seconds * 1e9))
     if args.delta_hist:
-        need_cols = {"flight_id", "timestamp"}
-        if not need_cols.issubset(available_cols):
-            print(
-                f"[WARN] 缺少 {sorted(need_cols - available_cols)}，无法计算 delta-hist，已自动跳过"
-            )
+        delta_fid_col: Optional[str] = None
+        if args.flight_id_col is not None:
+            delta_fid_col = args.flight_id_col
+        elif filter_enabled:
+            delta_fid_col = flight_id_col
+        elif "flight_id" in available_cols:
+            delta_fid_col = "flight_id"
+        elif "original_flight_id" in available_cols:
+            delta_fid_col = "original_flight_id"
+        if delta_fid_col is None:
+            print("[WARN] 缺少 flight_id/original_flight_id，无法计算 delta-hist，已自动跳过")
+        elif "timestamp" not in available_cols:
+            print("[WARN] 缺少 timestamp，无法计算 delta-hist，已自动跳过")
         else:
             delta_specs = _build_delta_specs(
                 available_cols, args.delta_bin_width, args.delta_max
             )
+    else:
+        delta_fid_col = None
     if delta_specs:
         print(f"[INFO] delta_hist_columns={[s.column for s in delta_specs]}")
         print(
             f"[INFO] delta_required_dt_seconds={args.delta_required_dt_seconds} (ns={required_dt_ns})"
         )
+        print(f"[INFO] delta_flight_id_col={delta_fid_col}")
 
     chunks = _split_into_chunks(files, args.workers)
     print(f"[INFO] chunk_count={len(chunks)}")
@@ -1216,7 +1441,16 @@ def main() -> int:
 
     if len(chunks) == 1:
         result = _process_file_chunk(
-            (chunks[0], specs, delta_specs, args.batch_size, required_dt_ns)
+            (
+                chunks[0],
+                specs,
+                delta_specs,
+                args.batch_size,
+                required_dt_ns,
+                allowed_ids,
+                flight_id_col,
+                delta_fid_col,
+            )
         )
         total_rows += result.total_rows
         total_valid += result.valid
@@ -1240,7 +1474,16 @@ def main() -> int:
             futures = [
                 executor.submit(
                     _process_file_chunk,
-                    (chunk, specs, delta_specs, args.batch_size, required_dt_ns),
+                    (
+                        chunk,
+                        specs,
+                        delta_specs,
+                        args.batch_size,
+                        required_dt_ns,
+                        allowed_ids,
+                        flight_id_col,
+                        delta_fid_col,
+                    ),
                 )
                 for chunk in chunks
             ]
@@ -1338,6 +1581,14 @@ def main() -> int:
             for spec in specs
         },
     }
+    meta["flight_filter"] = {
+        "mode": args.flight_filter,
+        "flight_id_col": flight_id_col,
+        "flights_meta_path": str(args.flights_meta_path) if filter_enabled else None,
+        "airports_meta_path": str(args.airports_meta_path) if filter_enabled else None,
+        "europe_continent": args.europe_continent if filter_enabled else None,
+        "allowed_flight_ids": int(allowed_ids.size) if allowed_ids is not None else None,
+    }
     if delta_specs:
         meta["delta_histograms"] = {
             spec.column: {
@@ -1348,6 +1599,7 @@ def main() -> int:
             }
             for spec in delta_specs
         }
+        meta["delta_flight_id_col"] = delta_fid_col
         meta["delta_pairs_total"] = int(total_delta_pairs)
     meta["hist_plot"] = {
         "yscales": [s.strip() for s in args.hist_yscales.split(",") if s.strip()],
@@ -1506,6 +1758,8 @@ def main() -> int:
             dynspread=heatmap_config["dynspread"],
             dynspread_threshold=heatmap_config["dynspread_threshold"],
             dynspread_max_px=heatmap_config["dynspread_max_px"],
+            allowed_ids=allowed_ids,
+            flight_id_col=flight_id_col,
         )
         print("[INFO] 已生成 2D 热力图 PNG：heatmap_lat_lon.png（matplotlib 版）")
         print("[INFO] 已生成 2D 热力图 PNG：heatmap_lat_lon_raw.png（datashader 裸图）")
