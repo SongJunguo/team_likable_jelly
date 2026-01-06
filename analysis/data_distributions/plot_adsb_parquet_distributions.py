@@ -99,6 +99,10 @@ DELTA_DEFAULTS = {
     "specific_humidity": {"bin_width": 1e-4, "max": 0.01, "circular": False},
 }
 
+_CONTINENTS_GDF_CACHE: Optional[object] = None
+_CONTINENTS_LOAD_FAILED = False
+_COUNTRY_LABELS_WARNED = False
+
 
 @dataclass(frozen=True)
 class ColumnMetaStats:
@@ -824,6 +828,235 @@ def _adjust_heatmap_steps_for_max_cells(
     return step_x, step_y, width, height, cells, scale
 
 
+def _fallback_continents_polygons() -> List[List[Tuple[float, float]]]:
+    # 简化大陆轮廓，仅用于背景提示。
+    return [
+        [(-168.0, 12.0), (-160.0, 50.0), (-140.0, 72.0), (-110.0, 70.0), (-90.0, 60.0),
+         (-70.0, 50.0), (-50.0, 25.0), (-82.0, 12.0), (-120.0, 12.0), (-168.0, 12.0)],
+        [(-82.0, 12.0), (-74.0, -5.0), (-70.0, -20.0), (-64.0, -35.0), (-58.0, -55.0),
+         (-35.0, -55.0), (-35.0, -10.0), (-50.0, 5.0), (-70.0, 12.0), (-82.0, 12.0)],
+        [(-20.0, 35.0), (10.0, 35.0), (40.0, 30.0), (50.0, 10.0), (45.0, -35.0),
+         (10.0, -35.0), (-10.0, -10.0), (-20.0, 10.0), (-20.0, 35.0)],
+        [(-10.0, 35.0), (10.0, 70.0), (40.0, 70.0), (40.0, 45.0), (30.0, 35.0),
+         (10.0, 35.0), (-10.0, 35.0)],
+        [(30.0, 5.0), (40.0, 20.0), (60.0, 55.0), (90.0, 70.0), (140.0, 60.0),
+         (160.0, 45.0), (150.0, 5.0), (110.0, 0.0), (70.0, 0.0), (40.0, 5.0),
+         (30.0, 5.0)],
+        [(110.0, -10.0), (115.0, -40.0), (155.0, -40.0), (155.0, -10.0), (110.0, -10.0)],
+        [(-180.0, -60.0), (-180.0, -90.0), (180.0, -90.0), (180.0, -60.0), (-180.0, -60.0)],
+    ]
+
+
+def _load_continents_geometry():
+    global _CONTINENTS_GDF_CACHE, _CONTINENTS_LOAD_FAILED
+    if _CONTINENTS_LOAD_FAILED:
+        return None
+    if _CONTINENTS_GDF_CACHE is not None:
+        return _CONTINENTS_GDF_CACHE
+    try:
+        import geopandas as gpd
+    except Exception as exc:
+        print(f"[WARN] geopandas 不可用，使用内置简化轮廓：{exc}")
+        _CONTINENTS_GDF_CACHE = _fallback_continents_polygons()
+        return _CONTINENTS_GDF_CACHE
+    base_dir = Path(__file__).resolve().parent
+    shp_10m = base_dir / "ne_10m_admin_0_countries" / "ne_10m_admin_0_countries.shp"
+    zip_10m = base_dir / "ne_10m_admin_0_countries.zip"
+    shp_110m = base_dir / "ne_110m_admin_0_countries" / "ne_110m_admin_0_countries.shp"
+    zip_110m = base_dir / "ne_110m_admin_0_countries.zip"
+
+    candidates: List[Tuple[str, str]] = []
+    if shp_10m.exists():
+        candidates.append(("10m_shp", str(shp_10m)))
+    if zip_10m.exists():
+        candidates.append(
+            ("10m_zip", f"zip://{zip_10m.resolve()}!ne_10m_admin_0_countries.shp")
+        )
+    if shp_110m.exists():
+        candidates.append(("110m_shp", str(shp_110m)))
+    if zip_110m.exists():
+        candidates.append(
+            ("110m_zip", f"zip://{zip_110m.resolve()}!ne_110m_admin_0_countries.shp")
+        )
+
+    for label, path in candidates:
+        try:
+            _CONTINENTS_GDF_CACHE = gpd.read_file(path)
+            return _CONTINENTS_GDF_CACHE
+        except Exception as exc:
+            print(f"[WARN] 本地 {label} 读取失败，回退其他方案：{exc}")
+    try:
+        world_path = gpd.datasets.get_path("naturalearth_lowres")
+    except Exception as exc:
+        print(f"[WARN] naturalearth_lowres 不可用，使用内置简化轮廓：{exc}")
+        _CONTINENTS_GDF_CACHE = _fallback_continents_polygons()
+        return _CONTINENTS_GDF_CACHE
+    try:
+        _CONTINENTS_GDF_CACHE = gpd.read_file(world_path)
+        return _CONTINENTS_GDF_CACHE
+    except Exception as exc:  # pragma: no cover
+        print(f"[WARN] 无法读取大洲背景数据，使用内置简化轮廓：{exc}")
+        _CONTINENTS_GDF_CACHE = _fallback_continents_polygons()
+        return _CONTINENTS_GDF_CACHE
+
+
+def _add_continents_background(
+    ax,
+    lon_range: Tuple[float, float],
+    lat_range: Tuple[float, float],
+    alpha: float,
+) -> None:
+    if alpha <= 0:
+        return
+    geom = _load_continents_geometry()
+    if geom is None:
+        return
+
+    lon_min, lon_max = lon_range
+    lat_min, lat_max = lat_range
+    if hasattr(geom, "plot"):
+        try:
+            from shapely.geometry import box
+        except Exception as exc:  # pragma: no cover
+            print(f"[WARN] 缺少 shapely，使用未裁剪轮廓：{exc}")
+            clipped = geom
+        else:
+            bbox = box(lon_min, lat_min, lon_max, lat_max)
+            try:
+                clipped = geom[geom.geometry.intersects(bbox)].copy()
+                clipped["geometry"] = clipped.geometry.intersection(bbox)
+                clipped = clipped[~clipped.geometry.is_empty]
+            except Exception:
+                clipped = geom
+
+        clipped.plot(
+            ax=ax,
+            color="black",
+            alpha=alpha,
+            edgecolor="black",
+            linewidth=0.3,
+            zorder=1,
+            aspect="auto",
+        )
+    else:
+        from matplotlib.patches import Polygon
+
+        for poly in geom:
+            patch = Polygon(
+                poly,
+                closed=True,
+                facecolor="black",
+                edgecolor="black",
+                linewidth=0.3,
+                alpha=alpha,
+                zorder=1,
+            )
+            ax.add_patch(patch)
+
+    ax.set_xlim(lon_min, lon_max)
+    ax.set_ylim(lat_min, lat_max)
+    ax.set_aspect("auto")
+
+
+def _choose_country_label_field(columns: Iterable[str]) -> Optional[str]:
+    preferred = [
+        "NAME",
+        "ADMIN",
+        "NAME_EN",
+        "NAME_LONG",
+        "SOVEREIGNT",
+        "FORMAL_EN",
+        "NAME_LOCAL",
+        "BRK_NAME",
+        "NAME_SORT",
+    ]
+    for col in preferred:
+        if col in columns:
+            return col
+    for col in columns:
+        if "name" in col.lower():
+            return col
+    return None
+
+
+def _add_country_labels(
+    ax,
+    lon_range: Tuple[float, float],
+    lat_range: Tuple[float, float],
+) -> None:
+    global _COUNTRY_LABELS_WARNED
+    geom = _load_continents_geometry()
+    if geom is None or not hasattr(geom, "geometry") or not hasattr(geom, "columns"):
+        if not _COUNTRY_LABELS_WARNED:
+            print("[WARN] 当前背景无法标注国家名（缺少矢量国家数据）")
+            _COUNTRY_LABELS_WARNED = True
+        return
+
+    label_col = _choose_country_label_field(geom.columns)
+    if label_col is None:
+        if not _COUNTRY_LABELS_WARNED:
+            print("[WARN] 找不到国家名称字段，跳过国家名标注")
+            _COUNTRY_LABELS_WARNED = True
+        return
+
+    try:
+        from shapely.geometry import box
+    except Exception as exc:  # pragma: no cover
+        if not _COUNTRY_LABELS_WARNED:
+            print(f"[WARN] 缺少 shapely，跳过国家名标注：{exc}")
+            _COUNTRY_LABELS_WARNED = True
+        return
+
+    lon_min, lon_max = lon_range
+    lat_min, lat_max = lat_range
+    bbox = box(lon_min, lat_min, lon_max, lat_max)
+    try:
+        view = geom[geom.geometry.intersects(bbox)].copy()
+    except Exception:
+        view = geom
+
+    if view.empty:
+        return
+
+    try:
+        import matplotlib.patheffects as pe
+    except Exception:
+        pe = None
+
+    for _, row in view.iterrows():
+        name = row.get(label_col)
+        if not isinstance(name, str) or not name.strip():
+            continue
+        geometry = row.geometry
+        if geometry is None:
+            continue
+        try:
+            point = geometry.representative_point()
+        except Exception:
+            try:
+                point = geometry.centroid
+            except Exception:
+                continue
+        if point is None:
+            continue
+        x, y = point.x, point.y
+        if x < lon_min or x > lon_max or y < lat_min or y > lat_max:
+            continue
+        text = ax.text(
+            x,
+            y,
+            name,
+            fontsize=5,
+            color="black",
+            alpha=0.85,
+            ha="center",
+            va="center",
+            zorder=5,
+        )
+        if pe is not None:
+            text.set_path_effects([pe.withStroke(linewidth=1, foreground="white")])
+
+
 def _render_lat_lon_heatmap(
     out_dir: Path,
     files: Sequence[Path],
@@ -845,6 +1078,9 @@ def _render_lat_lon_heatmap(
     dynspread: bool,
     dynspread_threshold: float,
     dynspread_max_px: int,
+    heatmap_background: str,
+    heatmap_background_alpha: float,
+    heatmap_country_labels: bool,
     allowed_ids: Optional[np.ndarray],
     flight_id_col: Optional[str],
 ) -> None:
@@ -871,6 +1107,10 @@ def _render_lat_lon_heatmap(
         )
     if dpi <= 0:
         raise ValueError(f"heatmap dpi 必须为正数: {dpi}")
+    if not (0.0 <= heatmap_background_alpha <= 1.0):
+        raise ValueError(
+            "heatmap-background-alpha 必须在 [0, 1] 范围内"
+        )
 
     columns = [lon_col, lat_col]
     if allowed_ids is not None:
@@ -958,8 +1198,15 @@ def _render_lat_lon_heatmap(
     fig_w = 10.0
     fig_h = max(4.5, fig_w * (plot_height / max(plot_width, 1)) * 0.9)
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi)
+    if heatmap_background == "continents":
+        _add_continents_background(
+            ax,
+            (lon_min, lon_max),
+            (lat_min, lat_max),
+            heatmap_background_alpha,
+        )
     cmap = plt.get_cmap("viridis").copy()
-    cmap.set_bad("white")
+    cmap.set_bad((1.0, 1.0, 1.0, 0.0))
     if vmax >= 1.0:
         norm = LogNorm(vmin=1.0, vmax=vmax)
         im = ax.imshow(
@@ -970,6 +1217,7 @@ def _render_lat_lon_heatmap(
             norm=norm,
             aspect="auto",
             interpolation="nearest",
+            zorder=2,
         )
         cbar = fig.colorbar(im, ax=ax, pad=0.02)
         cbar.set_label("Count (log scale)")
@@ -981,6 +1229,7 @@ def _render_lat_lon_heatmap(
             ha="center",
             va="center",
             transform=ax.transAxes,
+            zorder=4,
         )
     points = int(np.nansum(count_float))
     ax.set_title(
@@ -988,6 +1237,8 @@ def _render_lat_lon_heatmap(
     )
     ax.set_xlabel("Longitude (deg)")
     ax.set_ylabel("Latitude (deg)")
+    if heatmap_country_labels:
+        _add_country_labels(ax, (lon_min, lon_max), (lat_min, lat_max))
     fig.tight_layout()
     fig.savefig(out_dir / "heatmap_lat_lon.png")
     plt.close(fig)
@@ -1015,8 +1266,15 @@ def _render_lat_lon_heatmap(
             points_alt = points
 
         fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi)
+        if heatmap_background == "continents":
+            _add_continents_background(
+                ax,
+                (lon_min, lon_max),
+                (lat_min, lat_max),
+                heatmap_background_alpha,
+            )
         cmap_alt = plt.get_cmap("viridis").copy()
-        cmap_alt.set_bad("white")
+        cmap_alt.set_bad((1.0, 1.0, 1.0, 0.0))
         norm_alt = Normalize(vmin=float(alt_min), vmax=float(alt_max))
         im = ax.imshow(
             mean_alt,
@@ -1026,6 +1284,7 @@ def _render_lat_lon_heatmap(
             norm=norm_alt,
             aspect="auto",
             interpolation="nearest",
+            zorder=2,
         )
         cbar = fig.colorbar(im, ax=ax, pad=0.02)
         cbar.set_label("Mean altitude (ft)")
@@ -1034,6 +1293,8 @@ def _render_lat_lon_heatmap(
         )
         ax.set_xlabel("Longitude (deg)")
         ax.set_ylabel("Latitude (deg)")
+        if heatmap_country_labels:
+            _add_country_labels(ax, (lon_min, lon_max), (lat_min, lat_max))
         fig.tight_layout()
         fig.savefig(out_dir / "heatmap_lat_lon_mean_altitude.png")
         plt.close(fig)
@@ -1241,13 +1502,32 @@ def main() -> int:
     parser.add_argument(
         "--heatmap-max-cells",
         type=int,
-        default=60_000_000,
+        default=30_000_000,
         help="热力图最大像素数上限（超过会自动增大 step；默认：60,000,000）",
     )
     parser.add_argument("--heatmap-lon-min", type=float, default=None)
     parser.add_argument("--heatmap-lon-max", type=float, default=None)
     parser.add_argument("--heatmap-lat-min", type=float, default=None)
     parser.add_argument("--heatmap-lat-max", type=float, default=None)
+    parser.add_argument(
+        "--heatmap-background",
+        type=str,
+        default="continents",
+        choices=["none", "continents"],
+        help="热力图背景：none=不画，continents=大洲轮廓（默认：continents）",
+    )
+    parser.add_argument(
+        "--heatmap-background-alpha",
+        type=float,
+        default=0.12,
+        help="大洲背景遮罩透明度（默认：0.12）",
+    )
+    parser.add_argument(
+        "--heatmap-country-labels",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="是否在热力图上标注国家名（默认：开启）",
+    )
     parser.add_argument(
         "--heatmap-color-scale",
         type=str,
@@ -1301,8 +1581,8 @@ def main() -> int:
     parser.add_argument(
         "--heatmap-dpi",
         type=int,
-        default=5000,
-        help="热力图 PNG 的 DPI（默认：5000）",
+        default=1000,
+        help="热力图 PNG 的 DPI（默认：1000）",
     )
     args = parser.parse_args()
 
@@ -1541,6 +1821,9 @@ def main() -> int:
             "lon_max": lon_max,
             "lat_min": lat_min,
             "lat_max": lat_max,
+            "background": args.heatmap_background,
+            "background_alpha": args.heatmap_background_alpha,
+            "country_labels": args.heatmap_country_labels,
             "lon_step_requested": args.heatmap_lon_step,
             "lat_step_requested": args.heatmap_lat_step,
             "lon_step_effective": step_x,
@@ -1758,6 +2041,9 @@ def main() -> int:
             dynspread=heatmap_config["dynspread"],
             dynspread_threshold=heatmap_config["dynspread_threshold"],
             dynspread_max_px=heatmap_config["dynspread_max_px"],
+            heatmap_background=heatmap_config["background"],
+            heatmap_background_alpha=heatmap_config["background_alpha"],
+            heatmap_country_labels=heatmap_config["country_labels"],
             allowed_ids=allowed_ids,
             flight_id_col=flight_id_col,
         )

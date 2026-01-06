@@ -164,7 +164,7 @@
 
 ## 8. 分布统计与可视化（直方图 / 经纬热力图）
 
-仓库提供脚本 `analysis/plot_adsb_parquet_distributions.py` 用于统计字段分布并绘图，**只统计源数据中已落盘的列**（不会为缺失列做派生计算，因此 raw 目录里不会额外计算/绘制 `gsx/tas/wind` 等）。
+仓库提供脚本 `analysis/data_distributions/plot_adsb_parquet_distributions.py` 用于统计字段分布并绘图，**只统计源数据中已落盘的列**（不会为缺失列做派生计算，因此 raw 目录里不会额外计算/绘制 `gsx/tas/wind` 等）。
 
 ### 8.1 输出内容
 
@@ -195,6 +195,8 @@
 - 直方图 y 轴：默认同时输出线性与对数（`--hist-yscales linear,log`）
 - 直方图 PNG DPI：默认 600（`--hist-dpi 600`）
 - 热力图 PNG DPI：默认 5000（`--heatmap-dpi 5000`）
+- 热力图背景：默认开启大洲轮廓遮罩（`--heatmap-background continents`），透明度默认 0.12（`--heatmap-background-alpha 0.12`），优先使用本地 10m（`analysis/data_distributions/ne_10m_admin_0_countries.zip` 或解压后的 `analysis/data_distributions/ne_10m_admin_0_countries/ne_10m_admin_0_countries.shp`），其次使用本地 110m，再使用 `geopandas` naturalearth_lowres，最后退化为内置简化轮廓
+- 国家名称标注：默认开启（`--heatmap-country-labels`），可用 `--no-heatmap-country-labels` 关闭（依赖矢量国家数据）
 - 直方图绘图默认 x 轴裁剪（不影响 `hist_counts.csv` 统计本身，可用 `--plot-xlim` 覆盖）：
   - `groundspeed`：[0, 700] kt
   - `altitude`：[-1000, 45000] ft
@@ -217,7 +219,7 @@ conda activate opensky
 统计 raw（建议先跑一天做 sanity check）：
 
 ```bash
-python analysis/plot_adsb_parquet_distributions.py \
+python analysis/data_distributions/plot_adsb_parquet_distributions.py \
   --data-dir opensky_2024_PRC_dataset/rawtrajectories \
   --date-from 2022-01-01 --date-to 2022-01-01
 ```
@@ -225,29 +227,29 @@ python analysis/plot_adsb_parquet_distributions.py \
 统计插值目录（会自动统计已落盘的 `gsx/gsy/tasx/tasy/tas/wind` 等列）：
 
 ```bash
-python analysis/plot_adsb_parquet_distributions.py \
+python analysis/data_distributions/plot_adsb_parquet_distributions.py \
   --data-dir opensky_2024_PRC_dataset/interpolated_clean__PCA_v6 \
   --date-from 2022-01-01 --date-to 2022-01-01
 ```
 
-一键脚本（可选过滤/多数据集）：
+一键脚本（显式数据目录）：
 
 ```bash
-# 只跑欧洲起降航班（raw）
-bash analysis/run_distributions.sh \
-  --dataset raw \
+# 只跑欧洲起降航班（xue_processed_eu_v1）
+bash analysis/data_distributions/run_distributions.sh \
+  --data-dir opensky_2024_PRC_dataset/xue_processed_eu_v1 \
   --filter eu_meta \
   --date-from 2022-01-01 --date-to 2022-01-01
 
-# 三个数据集全跑（不过滤）
-bash analysis/run_distributions.sh \
-  --dataset all \
+# 跑 raw 不过滤
+bash analysis/data_distributions/run_distributions.sh \
+  --data-dir opensky_2024_PRC_dataset/rawtrajectories \
   --filter none \
   --date-from 2022-01-01 --date-to 2022-01-01
 
 # 透传额外参数
-bash analysis/run_distributions.sh \
-  --dataset raw \
+bash analysis/data_distributions/run_distributions.sh \
+  --data-dir opensky_2024_PRC_dataset/xue_processed_eu_v1 \
   --filter eu_meta \
   --date-from 2022-01-01 --date-to 2022-01-01 \
   -- --no-heatmap
@@ -256,7 +258,7 @@ bash analysis/run_distributions.sh \
 热力图范围控制（默认 `--heatmap-range-mode full` 使用数据 min/max；如只看中国附近可用 `bbox`；如希望超大时自动回退可用 `auto`。另外若像素数过大，脚本会自动增大 step 以满足 `--heatmap-max-cells` 上限，默认 60,000,000）：
 
 ```bash
-python analysis/plot_adsb_parquet_distributions.py \
+python analysis/data_distributions/plot_adsb_parquet_distributions.py \
   --data-dir opensky_2024_PRC_dataset/rawtrajectories \
   --date-from 2022-01-01 --date-to 2022-01-01 \
  --heatmap-range-mode full
@@ -265,7 +267,7 @@ python analysis/plot_adsb_parquet_distributions.py \
 仅统计“起降都在欧洲且有 meta 信息”的轨迹（过滤后 bins 与热力图范围会随之更新）：
 
 ```bash
-python analysis/plot_adsb_parquet_distributions.py \
+python analysis/data_distributions/plot_adsb_parquet_distributions.py \
   --data-dir opensky_2024_PRC_dataset/rawtrajectories \
   --date-from 2022-01-01 --date-to 2022-01-01 \
   --flight-filter eu_meta
@@ -274,7 +276,7 @@ python analysis/plot_adsb_parquet_distributions.py \
 仅输出线性 y 轴直方图，且把 `vertical_rate` 绘图范围收紧到 [-6000,6000]：
 
 ```bash
-python analysis/plot_adsb_parquet_distributions.py \
+python analysis/data_distributions/plot_adsb_parquet_distributions.py \
   --data-dir opensky_2024_PRC_dataset/rawtrajectories \
   --date-from 2022-01-01 --date-to 2022-01-01 \
   --hist-yscales linear \
@@ -284,7 +286,7 @@ python analysis/plot_adsb_parquet_distributions.py \
 只为 `altitude` 临时尝试更细的 bin（例如 1 ft），避免修改默认配置：
 
 ```bash
-python analysis/plot_adsb_parquet_distributions.py \
+python analysis/data_distributions/plot_adsb_parquet_distributions.py \
   --data-dir opensky_2024_PRC_dataset/rawtrajectories \
   --date-from 2022-01-01 --date-to 2022-01-01 \
   --bin-width altitude:1
@@ -293,7 +295,7 @@ python analysis/plot_adsb_parquet_distributions.py \
 只为 `vertical_rate` 临时尝试更细的 bin（例如 1 ft/min）：
 
 ```bash
-python analysis/plot_adsb_parquet_distributions.py \
+python analysis/data_distributions/plot_adsb_parquet_distributions.py \
   --data-dir opensky_2024_PRC_dataset/rawtrajectories \
   --date-from 2022-01-01 --date-to 2022-01-01 \
   --bin-width vertical_rate:1
@@ -302,7 +304,7 @@ python analysis/plot_adsb_parquet_distributions.py \
 关闭 delta 直方图（只输出原始列的分布）：
 
 ```bash
-python analysis/plot_adsb_parquet_distributions.py \
+python analysis/data_distributions/plot_adsb_parquet_distributions.py \
   --data-dir opensky_2024_PRC_dataset/rawtrajectories \
   --date-from 2022-01-01 --date-to 2022-01-01 \
   --no-delta-hist

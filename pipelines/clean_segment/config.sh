@@ -15,6 +15,17 @@ export SEGMENTED_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/segmented_clean__PCA
 export INTERPOLATED_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/interpolated_clean__PCA_v6"
 export REPORT_DIR="${REPO_ROOT}/reports/quality_check_clean__PCA_v6"
 
+# ========== 元数据筛选（可选，默认关闭） ==========
+export META_EUROPE_ONLY=1
+export META_TOP_AIRPORTS=0
+export META_TOP_AIRCRAFT=0
+export META_INCLUDE_SUBMISSION=0
+export META_INCLUDE_FINAL=0
+export META_FLIGHTS_PARQUET="${REPO_ROOT}/opensky_2024_PRC_dataset/flights/challenge_set.parquet"
+export META_AIRPORTS_PARQUET="${REPO_ROOT}/opensky_2024_PRC_dataset/airports_tz.parquet"
+export META_EUROPE_CONTINENT="EU"
+export META_PROCS=4
+
 
 # ========== 过滤参数 ==========
 export FILTER_STRATEGY="clean_segment_interp"  # 新策略名

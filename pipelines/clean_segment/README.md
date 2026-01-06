@@ -172,6 +172,33 @@ ENABLE_SKIPNAN_POST_PCA=1    # 1=在PCA之后再执行一次跨NaN速度检测
 POST_PCA_SKIPNAN_MAX_ITER=3  # 额外跨NaN速度检测的最大迭代次数（阈值复用MAX_SPEED_MPS）
 ```
 
+### 元数据筛选（可选）
+
+在过滤前按航班元数据筛选 `flight_id`（默认关闭）：
+
+```bash
+# 1=开启起降都在欧洲的航班过滤（continent==EU）
+META_EUROPE_ONLY=0
+
+# Top-N 频次筛选（0=关闭）
+META_TOP_AIRPORTS=0     # adep+ades 合并统计
+META_TOP_AIRCRAFT=0
+
+# 元数据来源（默认仅 challenge_set）
+META_INCLUDE_SUBMISSION=0
+META_INCLUDE_FINAL=0
+
+# 元数据文件路径
+META_FLIGHTS_PARQUET="$REPO_ROOT/opensky_2024_PRC_dataset/flights/challenge_set.parquet"
+META_AIRPORTS_PARQUET="$REPO_ROOT/opensky_2024_PRC_dataset/airports_tz.parquet"
+META_EUROPE_CONTINENT="EU"
+META_PROCS=4
+```
+
+说明：
+- 缺失/UNKNOWN 会被直接剔除
+- Top-N 统计基于欧洲筛选后的子集（若开启欧洲筛选）
+
 ### 切分参数
 ```bash
 MAX_DT=20                  # 最大时间间隔（秒）

@@ -51,6 +51,26 @@ def import_modules():
 
 import_modules()
 
+def _build_allowed_ids(args):
+    if not (args.europe_only or args.top_airports > 0 or args.top_aircraft > 0):
+        return None
+
+    from pipelines.common import meta_filters
+
+    allowed_ids, stats = meta_filters.build_allowed_flight_ids(
+        flights_parquet=Path(args.flights_parquet),
+        airports_parquet=Path(args.airports_parquet),
+        include_submission=args.include_submission,
+        include_final=args.include_final,
+        europe_only=args.europe_only,
+        top_airports=args.top_airports,
+        top_aircraft=args.top_aircraft,
+        europe_continent=args.europe_continent,
+        procs=args.meta_procs,
+    )
+    print(meta_filters.format_stats(stats))
+    return allowed_ids
+
 
 # ========== 阶段2：切分（单个flight_id） ==========
 
@@ -246,7 +266,7 @@ def interpolate_parallel(df, smooth=1e-2, workers=24, max_hole_size=20):
 
 def process_one_day_fast_parallel(input_file, output_file, strategy='clean_segment_interp', smooth=1e-2,
                                    max_dt=20, min_points=30, min_duration=120, workers=24,
-                                   max_hole_size=20):
+                                   max_hole_size=20, allowed_ids=None):
     """一口气处理单日数据（轨迹级并行）
 
     Args:
@@ -264,7 +284,7 @@ def process_one_day_fast_parallel(input_file, output_file, strategy='clean_segme
 
     # 阶段1：过滤（串行，因为filter链不好并行化）
     print(f"  [1/3] 过滤... (串行)")
-    df_filtered = read_trajectories(input_file, strategy)
+    df_filtered = read_trajectories(input_file, strategy, allowed_ids=allowed_ids)
     num_flights = df_filtered['flight_id'].nunique() if not df_filtered.empty else 0
     print(f"    过滤后: {num_flights} 个航班, {len(df_filtered):,} 行")
 
@@ -312,6 +332,9 @@ def process_one_day_fast_parallel(input_file, output_file, strategy='clean_segme
 
 
 def main():
+    default_flights_parquet = ROOT_DIR / "opensky_2024_PRC_dataset" / "flights" / "challenge_set.parquet"
+    default_airports_parquet = ROOT_DIR / "opensky_2024_PRC_dataset" / "airports_tz.parquet"
+
     parser = argparse.ArgumentParser(
         description='快速并行模式：一口气处理单日数据（轨迹级并行）'
     )
@@ -324,8 +347,22 @@ def main():
     parser.add_argument('--min-duration', type=int, default=120, help='最小时长（秒）')
     parser.add_argument('--workers', type=int, default=24, help='并行worker数')
     parser.add_argument('--max-hole-size', type=int, default=20, help='最大插值间隔（秒）')
+    parser.add_argument('--europe-only', '--europe_only', action='store_true', help='仅保留起降都在欧洲的航班（可选）')
+    parser.add_argument('--top-airports', '--top_airports', type=int, default=0, help='机场出现次数 Top-N（可选）')
+    parser.add_argument('--top-aircraft', '--top_aircraft', type=int, default=0, help='机型出现次数 Top-N（可选）')
+    parser.add_argument('--flights-parquet', '--flights_parquet', default=default_flights_parquet.as_posix(),
+                        help='航班元数据（默认 challenge_set.parquet）')
+    parser.add_argument('--airports-parquet', '--airports_parquet', default=default_airports_parquet.as_posix(),
+                        help='机场信息（continent 用于欧洲筛选）')
+    parser.add_argument('--include-submission', '--include_submission', action='store_true',
+                        help='合并 submission_set.parquet 参与统计（可选）')
+    parser.add_argument('--include-final', '--include_final', action='store_true',
+                        help='合并 final_submission_set.parquet 参与统计（可选）')
+    parser.add_argument('--europe-continent', '--europe_continent', default='EU', help='Europe 大洲编码（默认 EU）')
+    parser.add_argument('--meta-procs', '--meta_procs', type=int, default=4, help='元数据读取并发数（仅多源时生效）')
     args = parser.parse_args()
 
+    allowed_ids = _build_allowed_ids(args)
     process_one_day_fast_parallel(
         args.t_in,
         args.t_out,
@@ -335,7 +372,8 @@ def main():
         args.min_points,
         args.min_duration,
         args.workers,
-        args.max_hole_size
+        args.max_hole_size,
+        allowed_ids=allowed_ids
     )
 
 

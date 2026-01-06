@@ -73,6 +73,7 @@ echo "输出目录: $OUT"
 echo "策略: $FILTER_STRATEGY"
 echo "日期范围: $FROM ~ $TO"
 echo "并发数: $PROCS"
+echo "元数据筛选: europe_only=${META_EUROPE_ONLY}, top_airports=${META_TOP_AIRPORTS}, top_aircraft=${META_TOP_AIRCRAFT}"
 echo ""
 
 # 获取待处理文件列表
@@ -123,8 +124,19 @@ filter_one() {
 
   echo "▶️  过滤 $d" | tee "$log"
 
+  local meta_args=()
+  [[ "${META_EUROPE_ONLY:-0}" == "1" ]] && meta_args+=(--europe-only)
+  [[ "${META_TOP_AIRPORTS:-0}" != "0" ]] && meta_args+=(--top-airports "$META_TOP_AIRPORTS")
+  [[ "${META_TOP_AIRCRAFT:-0}" != "0" ]] && meta_args+=(--top-aircraft "$META_TOP_AIRCRAFT")
+  [[ "${META_INCLUDE_SUBMISSION:-0}" == "1" ]] && meta_args+=(--include-submission)
+  [[ "${META_INCLUDE_FINAL:-0}" == "1" ]] && meta_args+=(--include-final)
+  [[ -n "${META_FLIGHTS_PARQUET:-}" ]] && meta_args+=(--flights-parquet "$META_FLIGHTS_PARQUET")
+  [[ -n "${META_AIRPORTS_PARQUET:-}" ]] && meta_args+=(--airports-parquet "$META_AIRPORTS_PARQUET")
+  [[ -n "${META_EUROPE_CONTINENT:-}" ]] && meta_args+=(--europe-continent "$META_EUROPE_CONTINENT")
+  [[ -n "${META_PROCS:-}" ]] && meta_args+=(--meta-procs "$META_PROCS")
+
   if [[ "$DRYRUN" == "1" ]]; then
-    echo "DRYRUN: python -m pipelines.clean_segment.filter_trajs -t_in $in_f -t_out $out_f -strategy $FILTER_STRATEGY" | tee -a "$log"
+    echo "DRYRUN: python -m pipelines.clean_segment.filter_trajs -t_in $in_f -t_out $out_f -strategy $FILTER_STRATEGY ${meta_args[*]}" | tee -a "$log"
     return 0
   fi
 
@@ -132,6 +144,7 @@ filter_one() {
     -t_in "$in_f" \
     -t_out "$out_f" \
     -strategy "$FILTER_STRATEGY" \
+    "${meta_args[@]}" \
     >>"$log" 2>&1 || { echo "❌ 失败: $d (详见 $log)"; return 1; }
 
   echo "✅ 完成: $d" | tee -a "$log"

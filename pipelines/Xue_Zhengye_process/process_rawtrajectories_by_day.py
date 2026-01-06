@@ -18,6 +18,7 @@ from functools import partial
 import multiprocessing as mp
 
 from .flight_processor_core import setup_logging, worker_process_flight
+from pipelines.common import meta_filters
 
 
 FINAL_COLUMNS = [
@@ -76,6 +77,51 @@ def parse_args() -> argparse.Namespace:
         "--airports_parquet",
         default="opensky_2024_PRC_dataset/airports_tz.parquet",
         help="机场信息（用于补充 adep/ades 经纬度）",
+    )
+    parser.add_argument(
+        "--europe_only",
+        "--europe-only",
+        action="store_true",
+        help="仅保留起降都在欧洲的航班（可选）",
+    )
+    parser.add_argument(
+        "--top_airports",
+        "--top-airports",
+        type=int,
+        default=0,
+        help="按机场出现次数 Top-N 筛选（adep+ades 合并统计，可选）",
+    )
+    parser.add_argument(
+        "--top_aircraft",
+        "--top-aircraft",
+        type=int,
+        default=0,
+        help="按机型出现次数 Top-N 筛选（可选）",
+    )
+    parser.add_argument(
+        "--include_submission",
+        "--include-submission",
+        action="store_true",
+        help="合并 submission_set.parquet 参与统计（可选）",
+    )
+    parser.add_argument(
+        "--include_final",
+        "--include-final",
+        action="store_true",
+        help="合并 final_submission_set.parquet 参与统计（可选）",
+    )
+    parser.add_argument(
+        "--europe_continent",
+        "--europe-continent",
+        default=meta_filters.DEFAULT_EUROPE_CONTINENT,
+        help="Europe 大洲编码（默认 EU）",
+    )
+    parser.add_argument(
+        "--meta_procs",
+        "--meta-procs",
+        type=int,
+        default=4,
+        help="元数据读取并发数（仅多源时生效）",
     )
 
     parser.add_argument("--from", dest="date_from", default="", help="起始日期 YYYY-MM-DD（留空=自动）")
@@ -149,23 +195,40 @@ def _filter_dates(days: list[str], date_from: str, date_to: str) -> list[str]:
     return days
 
 
-def _load_flights_meta(flights_parquet: Path, airports_parquet: Path) -> pd.DataFrame:
-    flights = pd.read_parquet(
+def _load_flights_meta(
+    flights_parquet: Path,
+    airports_parquet: Path,
+    *,
+    europe_only: bool = False,
+    top_airports: int = 0,
+    top_aircraft: int = 0,
+    include_submission: bool = False,
+    include_final: bool = False,
+    europe_continent: str = meta_filters.DEFAULT_EUROPE_CONTINENT,
+    meta_procs: int = 4,
+) -> pd.DataFrame:
+    sources = meta_filters.build_flights_sources(
         flights_parquet,
-        columns=["flight_id", "adep", "ades", "aircraft_type"],
-        engine="pyarrow",
-    ).drop_duplicates("flight_id")
-
-    flights["flight_id"] = flights["flight_id"].astype(np.int64)
-    for col in ["adep", "ades", "aircraft_type"]:
-        flights[col] = flights[col].astype("string")
-
-    airports = pd.read_parquet(
-        airports_parquet,
-        columns=["icao_code", "latitude_deg", "longitude_deg"],
-        engine="pyarrow",
+        include_submission=include_submission,
+        include_final=include_final,
     )
-    airports["icao_code"] = airports["icao_code"].astype("string")
+    flights = meta_filters.load_flights_meta(sources, procs=meta_procs)
+    airports = meta_filters.load_airports_table(
+        airports_parquet,
+        columns=["icao_code", "continent", "latitude_deg", "longitude_deg"],
+    )
+
+    if europe_only or top_airports or top_aircraft:
+        flights, stats = meta_filters.apply_filters(
+            flights,
+            airports,
+            europe_only=europe_only,
+            top_airports=top_airports,
+            top_aircraft=top_aircraft,
+            europe_continent=europe_continent,
+            drop_unknown=True,
+        )
+        meta_filters.log_stats(stats, logger=logging.getLogger(__name__))
 
     airports_adep = airports.rename(
         columns={
@@ -449,7 +512,20 @@ def process_one_day(
 
 def main() -> int:
     args = parse_args()
+
     setup_logging(args.log_level)
+
+    log_path = Path(args.out_dir).resolve() / "xue_process.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    file_handler.setLevel(getattr(logging, str(args.log_level).upper(), logging.INFO))
+    file_handler.setFormatter(
+        logging.Formatter(
+            fmt="%(asctime)s - [%(levelname)s] - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+    logging.getLogger().addHandler(file_handler)
 
     raw_dir = Path(args.raw_dir).resolve()
     out_dir = Path(args.out_dir).resolve()
@@ -467,8 +543,21 @@ def main() -> int:
         return 2
 
     logging.info("加载航班元数据: %s", flights_parquet)
-    flights_meta = _load_flights_meta(flights_parquet, airports_parquet)
-    logging.info("challenge_set 航班数: %s", len(flights_meta))
+    flights_meta = _load_flights_meta(
+        flights_parquet,
+        airports_parquet,
+        europe_only=args.europe_only,
+        top_airports=args.top_airports,
+        top_aircraft=args.top_aircraft,
+        include_submission=args.include_submission,
+        include_final=args.include_final,
+        europe_continent=args.europe_continent,
+        meta_procs=args.meta_procs,
+    )
+    logging.info("航班元数据筛选后航班数: %s", len(flights_meta))
+    if flights_meta.empty:
+        logging.error("筛选后无可用航班，请检查过滤条件。")
+        return 2
 
     days = _list_day_strings(raw_dir)
     days = _filter_dates(days, args.date_from, args.date_to)

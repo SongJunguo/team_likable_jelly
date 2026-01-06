@@ -7,6 +7,7 @@
 
 import argparse
 import datetime
+import logging
 import os
 import fcntl
 from pathlib import Path
@@ -35,6 +36,8 @@ from traffic.algorithms import filters
 # 历史注记：航班 248803487（2022-01-03）在 unwrap 操作上曾发现异常，保留此条以备排查
 from traffic.core import Traffic
 import matplotlib.pyplot as plt
+
+from pipelines.common import meta_filters
 
 DERIV_PARAMS = {
     "latitude": dict(first=0.004, second=0.02),
@@ -264,12 +267,20 @@ def _build_spatial_pca(
     )
 
 
-def read_trajectories(f, strategy):
+def read_trajectories(f, strategy, allowed_ids=None):
     """读取轨迹文件并按策略执行滤波。"""
 
     df = pd.read_parquet(f)
     for v in ["flight_id"]:
         df[v] = df[v].astype(np.int64)
+
+    if allowed_ids is not None:
+        allowed_arr = np.asarray(allowed_ids, dtype=np.int64)
+        if allowed_arr.size == 0:
+            return df.iloc[0:0].copy()
+        before = len(df)
+        df = df[df["flight_id"].isin(allowed_arr)].copy()
+        logging.info("meta flight_id filter: %s -> %s", before, len(df))
 
     # 以航班号+时间戳去重后按时间排序，确保时间序列严格递增
     df = (
@@ -318,6 +329,27 @@ def read_trajectories(f, strategy):
     return dftrafficin
 
 
+def _build_allowed_ids_from_args(args):
+    if not (args.europe_only or args.top_airports > 0 or args.top_aircraft > 0):
+        return None
+
+    flights_parquet = Path(args.flights_parquet).resolve()
+    airports_parquet = Path(args.airports_parquet).resolve()
+    allowed_ids, stats = meta_filters.build_allowed_flight_ids(
+        flights_parquet=flights_parquet,
+        airports_parquet=airports_parquet,
+        include_submission=args.include_submission,
+        include_final=args.include_final,
+        europe_only=args.europe_only,
+        top_airports=args.top_airports,
+        top_aircraft=args.top_aircraft,
+        europe_continent=args.europe_continent,
+        procs=args.meta_procs,
+    )
+    print(meta_filters.format_stats(stats))
+    return allowed_ids
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="过滤掉高概率异常的轨迹观测",
@@ -328,9 +360,67 @@ def main():
         "-strategy",
         help="过滤策略名称: classic / classic_shortburst / classic_dp_loop / clean_segment_interp",
     )
+    parser.add_argument(
+        "--europe-only",
+        "--europe_only",
+        action="store_true",
+        help="仅保留起降都在欧洲的航班（可选）",
+    )
+    parser.add_argument(
+        "--top-airports",
+        "--top_airports",
+        type=int,
+        default=0,
+        help="机场出现次数 Top-N（adep+ades 合并统计，可选）",
+    )
+    parser.add_argument(
+        "--top-aircraft",
+        "--top_aircraft",
+        type=int,
+        default=0,
+        help="机型出现次数 Top-N（可选）",
+    )
+    parser.add_argument(
+        "--flights-parquet",
+        "--flights_parquet",
+        default="opensky_2024_PRC_dataset/flights/challenge_set.parquet",
+        help="航班元数据（默认 challenge_set）",
+    )
+    parser.add_argument(
+        "--airports-parquet",
+        "--airports_parquet",
+        default="opensky_2024_PRC_dataset/airports_tz.parquet",
+        help="机场信息（continent 用于欧洲筛选）",
+    )
+    parser.add_argument(
+        "--include-submission",
+        "--include_submission",
+        action="store_true",
+        help="合并 submission_set.parquet 参与统计（可选）",
+    )
+    parser.add_argument(
+        "--include-final",
+        "--include_final",
+        action="store_true",
+        help="合并 final_submission_set.parquet 参与统计（可选）",
+    )
+    parser.add_argument(
+        "--europe-continent",
+        "--europe_continent",
+        default=meta_filters.DEFAULT_EUROPE_CONTINENT,
+        help="Europe 大洲编码（默认 EU）",
+    )
+    parser.add_argument(
+        "--meta-procs",
+        "--meta_procs",
+        type=int,
+        default=4,
+        help="元数据读取并发数（仅多源时生效）",
+    )
     args = parser.parse_args()
 
-    df = read_trajectories(args.t_in, args.strategy)
+    allowed_ids = _build_allowed_ids_from_args(args)
+    df = read_trajectories(args.t_in, args.strategy, allowed_ids=allowed_ids)
     df.to_parquet(args.t_out, index=False)
 
 
