@@ -29,6 +29,8 @@ usage() {
   --to DATE           截止日期（默认: $DATE_TO）
   --procs N           并发数（默认: $SPLIT_PROCS）
   --max-dt N          最大时间间隔（默认: $MAX_DT）
+  --req-cols STR      必需列列表（空格分隔，默认: $REQ_COLS）
+  --gap-mode MODE     gap处理方式 split|drop（默认: $GAP_HANDLING）
   --min-points N      最小点数（默认: $MIN_POINTS）
   --min-duration N    最小时长（默认: $MIN_DURATION）
   --force             覆盖已存在文件
@@ -51,6 +53,8 @@ PROCS="$SPLIT_PROCS"
 FROM="$DATE_FROM"
 TO="$DATE_TO"
 MAX_DT_VAL="$MAX_DT"
+REQ_COLS_VAL="$REQ_COLS"
+GAP_MODE="${GAP_HANDLING:-split}"
 MIN_PTS="$MIN_POINTS"
 MIN_DUR="$MIN_DURATION"
 FORCE=0
@@ -65,6 +69,8 @@ while [[ $# -gt 0 ]]; do
     --to) TO="$2"; shift 2;;
     --procs) PROCS="$2"; shift 2;;
     --max-dt) MAX_DT_VAL="$2"; shift 2;;
+    --req-cols) REQ_COLS_VAL="$2"; shift 2;;
+    --gap-mode) GAP_MODE="$2"; shift 2;;
     --min-points) MIN_PTS="$2"; shift 2;;
     --min-duration) MIN_DUR="$2"; shift 2;;
     --force) FORCE=1; shift;;
@@ -86,7 +92,7 @@ echo "输入目录: $IN_DIR"
 echo "输出目录: $OUT"
 echo "日期范围: $FROM ~ $TO"
 echo "并发数: $PROCS"
-echo "切分参数: max_dt=${MAX_DT_VAL}s, min_points=$MIN_PTS, min_duration=${MIN_DUR}s"
+echo "切分参数: max_dt=${MAX_DT_VAL}s, gap_mode=${GAP_MODE}, req_cols=\"${REQ_COLS_VAL}\", min_points=$MIN_PTS, min_duration=${MIN_DUR}s"
 echo ""
 
 # 获取待处理文件列表
@@ -138,7 +144,7 @@ split_one() {
   echo "▶️  切分 $d" | tee "$log"
 
   if [[ "$DRYRUN" == "1" ]]; then
-    echo "DRYRUN: python $PY_SPLIT -t_in $in_f -t_out $out_f --max-dt $MAX_DT_VAL --min-points $MIN_PTS --min-duration $MIN_DUR" | tee -a "$log"
+    echo "DRYRUN: python $PY_SPLIT -t_in $in_f -t_out $out_f --max-dt $MAX_DT_VAL --req-cols \"$REQ_COLS_VAL\" --gap-mode $GAP_MODE --min-points $MIN_PTS --min-duration $MIN_DUR" | tee -a "$log"
     return 0
   fi
 
@@ -146,6 +152,8 @@ split_one() {
     -t_in "$in_f" \
     -t_out "$out_f" \
     --max-dt "$MAX_DT_VAL" \
+    --req-cols "$REQ_COLS_VAL" \
+    --gap-mode "$GAP_MODE" \
     --min-points "$MIN_PTS" \
     --min-duration "$MIN_DUR" \
     >>"$log" 2>&1 || { echo "❌ 失败: $d (详见 $log)"; return 1; }
@@ -154,7 +162,7 @@ split_one() {
 }
 
 export -f split_one
-export PY_SPLIT IN_DIR OUT MAX_DT_VAL MIN_PTS MIN_DUR DRYRUN
+export PY_SPLIT IN_DIR OUT MAX_DT_VAL REQ_COLS_VAL GAP_MODE MIN_PTS MIN_DUR DRYRUN
 
 # ========== 并行执行 ==========
 echo "🚀 开始并行处理（$PROCS 进程）..."

@@ -17,13 +17,26 @@
         --min-duration 120
 """
 
-import pandas as pd
-import numpy as np
 import argparse
 import os
 
+import numpy as np
+import pandas as pd
 
-def split_by_time(df, required_cols, max_dt=20, min_points=30, min_duration=120):
+
+DEFAULT_REQ_COLS = ["latitude", "longitude", "altitude"]
+
+
+def _parse_req_cols(value):
+    if not value:
+        return DEFAULT_REQ_COLS
+    cols = [c for c in value.split() if c]
+    if not cols:
+        raise ValueError("req-cols 不能为空")
+    return cols
+
+
+def split_by_time(df, required_cols, max_dt=20, min_points=30, min_duration=120, gap_mode="split"):
     """按时间切分轨迹
 
     Args:
@@ -32,12 +45,16 @@ def split_by_time(df, required_cols, max_dt=20, min_points=30, min_duration=120)
         max_dt: 最大时间间隔（秒）
         min_points: 最小点数
         min_duration: 最小时长（秒）
+        gap_mode: gap处理方式，split=切段，drop=存在gap则丢弃整条轨迹
 
     Returns:
         切分后的DataFrame（带segment标识）
     """
     if df.empty:
         return pd.DataFrame()
+
+    if gap_mode not in {"split", "drop"}:
+        raise ValueError(f"gap_mode 必须是 split 或 drop，当前: {gap_mode}")
 
     segments = []
 
@@ -56,6 +73,9 @@ def split_by_time(df, required_cols, max_dt=20, min_points=30, min_duration=120)
             continue
 
         dt = np.r_[0, (ts[1:] - ts[:-1]).astype('timedelta64[s]').astype(np.int64)]
+        if gap_mode == "drop" and np.any(dt > max_dt):
+            continue
+
         breaks = dt > max_dt
         group_id = breaks.cumsum()
 
@@ -103,8 +123,11 @@ def main():
     parser.add_argument('-t_in', required=True, help='输入过滤后轨迹文件')
     parser.add_argument('-t_out', required=True, help='输出切分后轨迹文件')
     parser.add_argument('--max-dt', type=int, default=20, help='最大时间间隔（秒）')
+    parser.add_argument('--req-cols', default=None, help='必需列列表（空格分隔）')
     parser.add_argument('--min-points', type=int, default=30, help='最小点数')
     parser.add_argument('--min-duration', type=int, default=120, help='最小时长（秒）')
+    parser.add_argument('--gap-mode', choices=['split', 'drop'], default='split',
+                        help='gap处理方式：split=切段，drop=存在gap则丢弃整条轨迹')
     args = parser.parse_args()
 
     print(f"▶️  切分: {os.path.basename(args.t_in)}")
@@ -114,13 +137,14 @@ def main():
     print(f"    输入: {len(df):,} 行, {df['flight_id'].nunique()} 个航班")
 
     # 切分
-    required_cols = ['latitude', 'longitude', 'altitude']
+    required_cols = _parse_req_cols(args.req_cols)
     df_seg = split_by_time(
         df,
         required_cols=required_cols,
         max_dt=args.max_dt,
         min_points=args.min_points,
-        min_duration=args.min_duration
+        min_duration=args.min_duration,
+        gap_mode=args.gap_mode
     )
 
     if df_seg.empty:

@@ -21,7 +21,7 @@ USAGE
 }
 
 # DATA_DIR="opensky_2024_PRC_dataset/interpolated_clean__PCA_v6"
-DATA_DIR="opensky_2024_PRC_dataset/interpolated_clean_eu_v2"
+DATA_DIR="opensky_2024_PRC_dataset/interpolated_clean_eu_v4"
 FILTER="eu_meta"
 DATE_FROM="2022-01-01"
 DATE_TO="2022-02-28"

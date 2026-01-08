@@ -11,8 +11,8 @@ STRATEGY="$FILTER_STRATEGY"
 # DATE="${1:-2022-01-11}"
 # FLIGHT_ID="${2:-248959644}"
 
-DATE="${1:-2022-02-17}"
-FLIGHT_ID="${2:-249596793}"
+DATE="${1:-2022-01-10}"
+FLIGHT_ID="${2:-248933339}"
 
 RAW_DIR="${RAW_DIR:-${REPO_ROOT}/opensky_2024_PRC_dataset/rawtrajectories}"
 OUT_DIR="${OUT_DIR:-$REPO_ROOT/reports/single_flight}"

@@ -10,10 +10,10 @@ export REPO_ROOT="$(cd "$SCRIPT_PATH/../.." && pwd)"
 export RAW_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/rawtrajectories"
 
 # 新流程输出目录（清晰命名）
-export FILTERED_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/filtered_clean_eu_v2"
-export SEGMENTED_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/segmented_clean_eu_v2"
-export INTERPOLATED_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/interpolated_clean_eu_v2"
-export REPORT_DIR="${REPO_ROOT}/reports/quality_check_clean_eu_v2"
+export FILTERED_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/filtered_clean_eu_v4"
+export SEGMENTED_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/segmented_clean_eu_v4"
+export INTERPOLATED_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/interpolated_clean_eu_v4"
+export REPORT_DIR="${REPO_ROOT}/reports/quality_check_clean_eu_v4"
 
 # ========== 元数据筛选（可选，默认关闭） ==========
 export META_EUROPE_ONLY=1
@@ -45,6 +45,7 @@ export POST_PCA_SKIPNAN_MAX_ITER=30  # 额外跨NaN速度检测最大迭代次�
 # ========== 切分参数 ==========
 export REQ_COLS="latitude longitude altitude groundspeed track vertical_rate"  # 切分时的“必需列”。只有这些列全都非 NaN的行才保留进入切分
 export MAX_DT=1200                # 最大时间间隔（秒）
+export GAP_HANDLING="drop"       # split=相邻时间间隔>MAX_DT就切段；drop=若存在>MAX_DT则丢弃整条轨迹（在dropna(REQ_COLS)之后判断）
 export MIN_POINTS=300            # 每个 segment 的最小点数，不满足就丢弃
 export MIN_DURATION=600         # 每个 segment 的最小时长（秒），不满足就丢弃
 export MAX_HOLE_SIZE="$MAX_DT"   # 插值阶段允许跨越的最大缺口（秒），超过就保持 NaN（不插值） 最大插值间隔（默认跟MAX_DT一致，可单独调整）

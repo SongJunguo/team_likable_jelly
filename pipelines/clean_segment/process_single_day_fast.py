@@ -27,6 +27,17 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+DEFAULT_REQ_COLS = ["latitude", "longitude", "altitude"]
+
+
+def _parse_req_cols(value):
+    if not value:
+        return DEFAULT_REQ_COLS
+    cols = [c for c in value.split() if c]
+    if not cols:
+        raise ValueError("req-cols 不能为空")
+    return cols
+
 ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
@@ -70,7 +81,7 @@ def _build_allowed_ids(args):
 
 # ========== 阶段2：切分（内存模式） ==========
 
-def split_by_time_in_memory(df, required_cols, max_dt=20, min_points=30, min_duration=120):
+def split_by_time_in_memory(df, required_cols, max_dt=20, min_points=30, min_duration=120, gap_mode="split"):
     """在内存中按时间切分（复用split_segments_on_missing的逻辑）
 
     Args:
@@ -79,12 +90,16 @@ def split_by_time_in_memory(df, required_cols, max_dt=20, min_points=30, min_dur
         max_dt: 最大时间间隔（秒）
         min_points: 最小点数
         min_duration: 最小时长（秒）
+        gap_mode: gap处理方式，split=切段，drop=存在gap则丢弃整条轨迹
 
     Returns:
         切分后的DataFrame（带segment标识）
     """
     if df.empty:
         return pd.DataFrame()
+
+    if gap_mode not in {"split", "drop"}:
+        raise ValueError(f"gap_mode 必须是 split 或 drop，当前: {gap_mode}")
 
     segments = []
 
@@ -103,6 +118,9 @@ def split_by_time_in_memory(df, required_cols, max_dt=20, min_points=30, min_dur
             continue
 
         dt = np.r_[0, (ts[1:] - ts[:-1]).astype('timedelta64[s]').astype(np.int64)]
+        if gap_mode == "drop" and np.any(dt > max_dt):
+            continue
+
         breaks = dt > max_dt
         group_id = breaks.cumsum()
 
@@ -183,7 +201,7 @@ def interpolate_in_memory(df, smooth=1e-2, max_hole_size=20):
 
 def process_one_day_fast(input_file, output_file, strategy='clean_segment_interp', smooth=1e-2,
                          max_dt=20, min_points=30, min_duration=120, max_hole_size=20,
-                         allowed_ids=None):
+                         gap_mode="split", req_cols=None, allowed_ids=None):
     """一口气处理单日数据
 
     Args:
@@ -204,13 +222,14 @@ def process_one_day_fast(input_file, output_file, strategy='clean_segment_interp
 
     # 阶段2：切分
     print("  [2/3] 切分...")
-    required_cols = ['latitude', 'longitude', 'altitude']
+    required_cols = req_cols or DEFAULT_REQ_COLS
     df_segmented = split_by_time_in_memory(
         df_filtered,
         required_cols=required_cols,
         max_dt=max_dt,
         min_points=min_points,
-        min_duration=min_duration
+        min_duration=min_duration,
+        gap_mode=gap_mode
     )
 
     if df_segmented.empty:
@@ -251,9 +270,12 @@ def main():
     parser.add_argument('-strategy', default='clean_segment_interp', help='过滤策略')
     parser.add_argument('-smooth', type=float, default=1e-2, help='插值平滑系数')
     parser.add_argument('--max-dt', type=int, default=20, help='最大时间间隔（秒）')
+    parser.add_argument('--req-cols', default=None, help='必需列列表（空格分隔）')
     parser.add_argument('--min-points', type=int, default=30, help='最小点数')
     parser.add_argument('--min-duration', type=int, default=120, help='最小时长（秒）')
     parser.add_argument('--max-hole-size', type=int, default=20, help='最大插值间隔（秒）')
+    parser.add_argument('--gap-mode', choices=['split', 'drop'], default='split',
+                        help='gap处理方式：split=切段，drop=存在gap则丢弃整条轨迹')
     parser.add_argument('--europe-only', '--europe_only', action='store_true', help='仅保留起降都在欧洲的航班（可选）')
     parser.add_argument('--top-airports', '--top_airports', type=int, default=0, help='机场出现次数 Top-N（可选）')
     parser.add_argument('--top-aircraft', '--top_aircraft', type=int, default=0, help='机型出现次数 Top-N（可选）')
@@ -270,6 +292,7 @@ def main():
     args = parser.parse_args()
 
     allowed_ids = _build_allowed_ids(args)
+    req_cols = _parse_req_cols(args.req_cols)
     process_one_day_fast(
         args.t_in,
         args.t_out,
@@ -279,6 +302,8 @@ def main():
         args.min_points,
         args.min_duration,
         args.max_hole_size,
+        args.gap_mode,
+        req_cols,
         allowed_ids=allowed_ids
     )
 

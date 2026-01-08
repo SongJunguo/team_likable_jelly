@@ -201,11 +201,14 @@ META_PROCS=4
 
 ### 切分参数
 ```bash
+REQ_COLS="latitude longitude altitude groundspeed track vertical_rate"  # 切分前必需列（dropna后再做切分）
 MAX_DT=20                  # 最大时间间隔（秒）
+GAP_HANDLING="split"       # split=切段，drop=存在>MAX_DT则丢弃整条轨迹（在dropna(REQ_COLS)之后判断）
 MIN_POINTS=30              # 最小segment点数
 MIN_DURATION=120           # 最小segment时长（秒）
 MAX_HOLE_SIZE="$MAX_DT"    # 最大插值间隔，默认与MAX_DT保持一致，可单独调整
 ```
+说明：`REQ_COLS` 会由 `02_split_by_time.sh` / `run_fast_pipeline.sh` 透传给切分脚本（参数 `--req-cols`）。
 
 ### 插值参数
 ```bash
@@ -233,6 +236,7 @@ ENABLE_NAN_CHECK=1        # 1=启用NaN检测, 0=禁用
 NAN_CHECK_COLUMNS="latitude longitude altitude"  # 重点检查经纬高
 NAN_CHECK_PROCS=24        # NaN检测并行进程数（⭐并行加速）
 ```
+说明：NaN统计会识别 `numpy` 的整数类型，避免缺失值计数被误判为 0。
 
 ## 📊 质量检查（⭐已升级）
 

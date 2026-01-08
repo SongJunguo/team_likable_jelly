@@ -33,6 +33,8 @@ usage() {
   --to DATE           截止日期 YYYY-MM-DD（默认: $DATE_TO）
   --procs N           并发数（默认: $INTERP_PROCS）
   --smooth VAL        插值平滑系数（默认: $SMOOTH）
+  --req-cols STR      必需列列表（空格分隔，默认: $REQ_COLS）
+  --gap-mode MODE     gap处理方式 split|drop（默认: $GAP_HANDLING）
   --with-quality      完成后自动运行质量检查（默认开启）
   --no-quality        禁用质量检查
   --with-stats        完成后自动跑 raw/filter/segment/interp 点数统计（默认开启，缺目录自动跳过）
@@ -60,6 +62,8 @@ PROCS="${INTERP_PROCS}"
 FROM="${DATE_FROM}"
 TO="${DATE_TO}"
 SMOOTH_VAL="${SMOOTH}"
+REQ_COLS_VAL="${REQ_COLS}"
+GAP_MODE="${GAP_HANDLING:-split}"
 WITH_QUALITY=1
 WITH_STATS=1
 FORCE=0
@@ -74,6 +78,8 @@ while [[ $# -gt 0 ]]; do
     --to) TO="$2"; shift 2;;
     --procs) PROCS="$2"; shift 2;;
     --smooth) SMOOTH_VAL="$2"; shift 2;;
+    --req-cols) REQ_COLS_VAL="$2"; shift 2;;
+    --gap-mode) GAP_MODE="$2"; shift 2;;
     --with-quality) WITH_QUALITY=1; shift;;
     --no-quality) WITH_QUALITY=0; shift;;
     --with-stats) WITH_STATS=1; shift;;
@@ -100,6 +106,8 @@ echo "日期范围: $FROM ~ $TO"
 echo "并发数: $PROCS"
 echo "平滑系数: $SMOOTH_VAL"
 echo "最大插值间隔: $MAX_HOLE_SIZE"
+echo "必需列: $REQ_COLS_VAL"
+echo "gap处理: $GAP_MODE"
 echo "元数据筛选: europe_only=${META_EUROPE_ONLY}, top_airports=${META_TOP_AIRPORTS}, top_aircraft=${META_TOP_AIRCRAFT}"
 echo ""
 
@@ -162,7 +170,7 @@ run_one_fast() {
   [[ -n "${META_PROCS:-}" ]] && meta_args+=(--meta-procs "$META_PROCS")
 
   if [[ "$DRYRUN" == "1" ]]; then
-    echo "DRYRUN: python $PY_FAST -t_in $in_f -t_out $out_f -strategy $FILTER_STRATEGY -smooth $SMOOTH_VAL --max-dt $MAX_DT --min-points $MIN_POINTS --min-duration $MIN_DURATION --max-hole-size $MAX_HOLE_SIZE ${meta_args[*]}" | tee -a "$log"
+    echo "DRYRUN: python $PY_FAST -t_in $in_f -t_out $out_f -strategy $FILTER_STRATEGY -smooth $SMOOTH_VAL --max-dt $MAX_DT --req-cols \"$REQ_COLS_VAL\" --gap-mode $GAP_MODE --min-points $MIN_POINTS --min-duration $MIN_DURATION --max-hole-size $MAX_HOLE_SIZE ${meta_args[*]}" | tee -a "$log"
     return 0
   fi
 
@@ -172,6 +180,8 @@ run_one_fast() {
     -strategy "$FILTER_STRATEGY" \
     -smooth "$SMOOTH_VAL" \
     --max-dt "$MAX_DT" \
+    --req-cols "$REQ_COLS_VAL" \
+    --gap-mode "$GAP_MODE" \
     --min-points "$MIN_POINTS" \
     --min-duration "$MIN_DURATION" \
     --max-hole-size "$MAX_HOLE_SIZE" \
@@ -182,7 +192,7 @@ run_one_fast() {
 }
 
 export -f run_one_fast
-export PY_FAST RAW OUT FILTER_STRATEGY SMOOTH_VAL MAX_DT MIN_POINTS MIN_DURATION MAX_HOLE_SIZE DRYRUN
+export PY_FAST RAW OUT FILTER_STRATEGY SMOOTH_VAL MAX_DT REQ_COLS_VAL GAP_MODE MIN_POINTS MIN_DURATION MAX_HOLE_SIZE DRYRUN
 
 # ========== 并行执行 ==========
 echo "🚀 开始并行处理（$PROCS 进程）..."

@@ -4,6 +4,7 @@
 验证插值后的数据是否真的没有任何缺失值
 """
 
+import numbers
 import pandas as pd
 from pathlib import Path
 import multiprocessing as mp
@@ -209,7 +210,7 @@ def main():
                 
                 # 按列统计缺失值
                 for col, missing_count in result['missing_values'].items():
-                    if isinstance(missing_count, int):
+                    if isinstance(missing_count, numbers.Integral):
                         total_stats['missing_by_column'][col] += missing_count
     
     # 输出统计结果
@@ -238,7 +239,7 @@ def main():
             print(f"  📁 {result['file']}:")
             print(f"     数据点: {result['total_points']:,}, 轨迹数: {result['trajectories']}")
             for col, missing_count in result['missing_values'].items():
-                if isinstance(missing_count, int) and missing_count > 0:
+                if isinstance(missing_count, numbers.Integral) and missing_count > 0:
                     missing_rate = missing_count / result['total_points'] * 100
                     print(f"     {col}: {missing_count:,} ({missing_rate:.2f}%)")
         
