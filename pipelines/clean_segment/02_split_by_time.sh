@@ -31,6 +31,10 @@ usage() {
   --max-dt N          最大时间间隔（默认: $MAX_DT）
   --req-cols STR      必需列列表（空格分隔，默认: $REQ_COLS）
   --gap-mode MODE     gap处理方式 split|drop（默认: $GAP_HANDLING）
+  --airport-filter    启用机场邻近度过滤（默认: $AIRPORT_PROXIMITY_ENABLE）
+  --airport-threshold-km N  机场邻近度阈值（默认: $AIRPORT_PROXIMITY_THRESHOLD_KM）
+  --flights-parquet PATH    航班元数据（默认: $META_FLIGHTS_PARQUET）
+  --airports-parquet PATH   机场坐标（默认: $META_AIRPORTS_PARQUET）
   --min-points N      最小点数（默认: $MIN_POINTS）
   --min-duration N    最小时长（默认: $MIN_DURATION）
   --force             覆盖已存在文件
@@ -57,6 +61,10 @@ REQ_COLS_VAL="$REQ_COLS"
 GAP_MODE="${GAP_HANDLING:-split}"
 MIN_PTS="$MIN_POINTS"
 MIN_DUR="$MIN_DURATION"
+AIRPORT_FILTER="${AIRPORT_PROXIMITY_ENABLE:-0}"
+AIRPORT_THRESHOLD="${AIRPORT_PROXIMITY_THRESHOLD_KM:-10}"
+FLIGHTS_PARQUET="${META_FLIGHTS_PARQUET:-}"
+AIRPORTS_PARQUET="${META_AIRPORTS_PARQUET:-}"
 FORCE=0
 DRYRUN=0
 LIMIT=0
@@ -71,6 +79,10 @@ while [[ $# -gt 0 ]]; do
     --max-dt) MAX_DT_VAL="$2"; shift 2;;
     --req-cols) REQ_COLS_VAL="$2"; shift 2;;
     --gap-mode) GAP_MODE="$2"; shift 2;;
+    --airport-filter) AIRPORT_FILTER=1; shift;;
+    --airport-threshold-km) AIRPORT_THRESHOLD="$2"; shift 2;;
+    --flights-parquet) FLIGHTS_PARQUET="$2"; shift 2;;
+    --airports-parquet) AIRPORTS_PARQUET="$2"; shift 2;;
     --min-points) MIN_PTS="$2"; shift 2;;
     --min-duration) MIN_DUR="$2"; shift 2;;
     --force) FORCE=1; shift;;
@@ -93,6 +105,7 @@ echo "输出目录: $OUT"
 echo "日期范围: $FROM ~ $TO"
 echo "并发数: $PROCS"
 echo "切分参数: max_dt=${MAX_DT_VAL}s, gap_mode=${GAP_MODE}, req_cols=\"${REQ_COLS_VAL}\", min_points=$MIN_PTS, min_duration=${MIN_DUR}s"
+echo "机场邻近过滤: enable=${AIRPORT_FILTER}, threshold_km=${AIRPORT_THRESHOLD}, flights=${FLIGHTS_PARQUET}, airports=${AIRPORTS_PARQUET}"
 echo ""
 
 # 获取待处理文件列表
@@ -143,8 +156,15 @@ split_one() {
 
   echo "▶️  切分 $d" | tee "$log"
 
+  local airport_args=()
+  if [[ "$AIRPORT_FILTER" == "1" ]]; then
+    airport_args+=(--airport-filter --airport-threshold-km "$AIRPORT_THRESHOLD")
+    [[ -n "$FLIGHTS_PARQUET" ]] && airport_args+=(--flights-parquet "$FLIGHTS_PARQUET")
+    [[ -n "$AIRPORTS_PARQUET" ]] && airport_args+=(--airports-parquet "$AIRPORTS_PARQUET")
+  fi
+
   if [[ "$DRYRUN" == "1" ]]; then
-    echo "DRYRUN: python $PY_SPLIT -t_in $in_f -t_out $out_f --max-dt $MAX_DT_VAL --req-cols \"$REQ_COLS_VAL\" --gap-mode $GAP_MODE --min-points $MIN_PTS --min-duration $MIN_DUR" | tee -a "$log"
+    echo "DRYRUN: python $PY_SPLIT -t_in $in_f -t_out $out_f --max-dt $MAX_DT_VAL --req-cols \"$REQ_COLS_VAL\" --gap-mode $GAP_MODE --min-points $MIN_PTS --min-duration $MIN_DUR ${airport_args[*]}" | tee -a "$log"
     return 0
   fi
 
@@ -156,6 +176,7 @@ split_one() {
     --gap-mode "$GAP_MODE" \
     --min-points "$MIN_PTS" \
     --min-duration "$MIN_DUR" \
+    "${airport_args[@]}" \
     >>"$log" 2>&1 || { echo "❌ 失败: $d (详见 $log)"; return 1; }
 
   echo "✅ 完成: $d" | tee -a "$log"
@@ -163,6 +184,7 @@ split_one() {
 
 export -f split_one
 export PY_SPLIT IN_DIR OUT MAX_DT_VAL REQ_COLS_VAL GAP_MODE MIN_PTS MIN_DUR DRYRUN
+export AIRPORT_FILTER AIRPORT_THRESHOLD FLIGHTS_PARQUET AIRPORTS_PARQUET
 
 # ========== 并行执行 ==========
 echo "🚀 开始并行处理（$PROCS 进程）..."

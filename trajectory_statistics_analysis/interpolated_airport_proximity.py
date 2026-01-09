@@ -19,7 +19,7 @@ FLIGHT_ADEP = {}
 FLIGHT_ADES = {}
 IATA_COORDS = {}
 ICAO_COORDS = {}
-DISTANCE_THRESHOLD_KM = 50.0
+DISTANCE_THRESHOLD_KM = 10.0
 
 REQ_COLUMNS = ["flight_id", "original_flight_id", "timestamp", "latitude", "longitude"]
 OUTPUT_COLUMNS = [
@@ -179,7 +179,7 @@ def main() -> None:
     parser.add_argument(
         "--distance-threshold-km",
         type=float,
-        default=50.0,
+        default=10.0,
         help="Distance threshold in km",
     )
     parser.add_argument(

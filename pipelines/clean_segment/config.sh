@@ -10,10 +10,10 @@ export REPO_ROOT="$(cd "$SCRIPT_PATH/../.." && pwd)"
 export RAW_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/rawtrajectories"
 
 # 新流程输出目录（清晰命名）
-export FILTERED_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/filtered_clean_eu_v4"
-export SEGMENTED_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/segmented_clean_eu_v4"
-export INTERPOLATED_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/interpolated_clean_eu_v4"
-export REPORT_DIR="${REPO_ROOT}/reports/quality_check_clean_eu_v4"
+export FILTERED_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/filtered_clean_eu_v5"
+export SEGMENTED_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/segmented_clean_eu_v5"
+export INTERPOLATED_DIR="${REPO_ROOT}/opensky_2024_PRC_dataset/interpolated_clean_eu_v5"
+export REPORT_DIR="${REPO_ROOT}/reports/quality_check_clean_eu_v5"
 
 # ========== 元数据筛选（可选，默认关闭） ==========
 export META_EUROPE_ONLY=1
@@ -25,6 +25,10 @@ export META_FLIGHTS_PARQUET="${REPO_ROOT}/opensky_2024_PRC_dataset/flights/chall
 export META_AIRPORTS_PARQUET="${REPO_ROOT}/opensky_2024_PRC_dataset/airports_tz.parquet"
 export META_EUROPE_CONTINENT="EU"
 export META_PROCS=4
+
+# ========== 机场邻近度过滤（默认开启） ==========
+export AIRPORT_PROXIMITY_ENABLE=1
+export AIRPORT_PROXIMITY_THRESHOLD_KM=10
 
 
 # ========== 过滤参数 ==========

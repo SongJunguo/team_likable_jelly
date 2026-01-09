@@ -109,6 +109,7 @@ echo "最大插值间隔: $MAX_HOLE_SIZE"
 echo "必需列: $REQ_COLS_VAL"
 echo "gap处理: $GAP_MODE"
 echo "元数据筛选: europe_only=${META_EUROPE_ONLY}, top_airports=${META_TOP_AIRPORTS}, top_aircraft=${META_TOP_AIRCRAFT}"
+echo "机场邻近过滤: enable=${AIRPORT_PROXIMITY_ENABLE:-0}, threshold_km=${AIRPORT_PROXIMITY_THRESHOLD_KM:-10}"
 echo ""
 
 # 获取待处理文件列表
@@ -169,8 +170,13 @@ run_one_fast() {
   [[ -n "${META_EUROPE_CONTINENT:-}" ]] && meta_args+=(--europe-continent "$META_EUROPE_CONTINENT")
   [[ -n "${META_PROCS:-}" ]] && meta_args+=(--meta-procs "$META_PROCS")
 
+  local airport_args=()
+  if [[ "${AIRPORT_PROXIMITY_ENABLE:-0}" == "1" ]]; then
+    airport_args+=(--airport-filter --airport-threshold-km "${AIRPORT_PROXIMITY_THRESHOLD_KM:-10}")
+  fi
+
   if [[ "$DRYRUN" == "1" ]]; then
-    echo "DRYRUN: python $PY_FAST -t_in $in_f -t_out $out_f -strategy $FILTER_STRATEGY -smooth $SMOOTH_VAL --max-dt $MAX_DT --req-cols \"$REQ_COLS_VAL\" --gap-mode $GAP_MODE --min-points $MIN_POINTS --min-duration $MIN_DURATION --max-hole-size $MAX_HOLE_SIZE ${meta_args[*]}" | tee -a "$log"
+    echo "DRYRUN: python $PY_FAST -t_in $in_f -t_out $out_f -strategy $FILTER_STRATEGY -smooth $SMOOTH_VAL --max-dt $MAX_DT --req-cols \"$REQ_COLS_VAL\" --gap-mode $GAP_MODE --min-points $MIN_POINTS --min-duration $MIN_DURATION --max-hole-size $MAX_HOLE_SIZE ${meta_args[*]} ${airport_args[*]}" | tee -a "$log"
     return 0
   fi
 
@@ -186,6 +192,7 @@ run_one_fast() {
     --min-duration "$MIN_DURATION" \
     --max-hole-size "$MAX_HOLE_SIZE" \
     "${meta_args[@]}" \
+    "${airport_args[@]}" \
     >>"$log" 2>&1 || { echo "❌ 失败: $d (详见 $log)"; return 1; }
 
   echo "✅ 完成: $d" | tee -a "$log"

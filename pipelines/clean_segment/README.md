@@ -199,6 +199,20 @@ META_PROCS=4
 - 缺失/UNKNOWN 会被直接剔除
 - Top-N 统计基于欧洲筛选后的子集（若开启欧洲筛选）
 
+### 机场邻近度过滤（默认开启）
+
+在过滤后、切分前按机场邻近度过滤（基于 challenge_set 的 `adep/ades` + airports_tz 坐标）：
+
+```bash
+AIRPORT_PROXIMITY_ENABLE=1      # 1=启用（默认开启）
+AIRPORT_PROXIMITY_THRESHOLD_KM=10
+```
+
+说明：
+- 只使用 `META_FLIGHTS_PARQUET` 与 `META_AIRPORTS_PARQUET` 的数据源
+- `flight_id` 不在 `challenge_set.parquet` 中的航班会直接丢弃
+- `adep/ades` 缺失或无法匹配机场坐标的航班会被丢弃
+
 ### 切分参数
 ```bash
 REQ_COLS="latitude longitude altitude groundspeed track vertical_rate"  # 切分前必需列（dropna后再做切分）

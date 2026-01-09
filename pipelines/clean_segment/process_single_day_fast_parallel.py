@@ -61,6 +61,7 @@ def import_modules():
 
 
 import_modules()
+from pipelines.clean_segment.airport_proximity_filter import filter_by_airport_proximity
 
 def _build_allowed_ids(args):
     if not (args.europe_only or args.top_airports > 0 or args.top_aircraft > 0):
@@ -284,7 +285,9 @@ def interpolate_parallel(df, smooth=1e-2, workers=24, max_hole_size=20):
 
 def process_one_day_fast_parallel(input_file, output_file, strategy='clean_segment_interp', smooth=1e-2,
                                    max_dt=20, min_points=30, min_duration=120, workers=24,
-                                   max_hole_size=20, gap_mode="split", req_cols=None, allowed_ids=None):
+                                   max_hole_size=20, gap_mode="split", req_cols=None, allowed_ids=None,
+                                   airport_filter=False, airport_threshold_km=10.0,
+                                   flights_parquet=None, airports_parquet=None):
     """一口气处理单日数据（轨迹级并行）
 
     Args:
@@ -310,6 +313,19 @@ def process_one_day_fast_parallel(input_file, output_file, strategy='clean_segme
         print("    ⚠️  过滤后无数据")
         pd.DataFrame().to_parquet(output_file, index=False)
         return
+
+    if airport_filter:
+        print("    机场邻近过滤...")
+        df_filtered = filter_by_airport_proximity(
+            df_filtered,
+            flights_parquet=flights_parquet,
+            airports_parquet=airports_parquet,
+            threshold_km=airport_threshold_km,
+        )
+        if df_filtered.empty:
+            print("    ⚠️  机场邻近过滤后无有效航班")
+            pd.DataFrame().to_parquet(output_file, index=False)
+            return
 
     # 阶段2：切分（并行）
     print(f"  [2/3] 切分... (轨迹级并行)")
@@ -382,6 +398,9 @@ def main():
                         help='合并 final_submission_set.parquet 参与统计（可选）')
     parser.add_argument('--europe-continent', '--europe_continent', default='EU', help='Europe 大洲编码（默认 EU）')
     parser.add_argument('--meta-procs', '--meta_procs', type=int, default=4, help='元数据读取并发数（仅多源时生效）')
+    parser.add_argument('--airport-filter', action='store_true', help='启用机场邻近度过滤')
+    parser.add_argument('--airport-threshold-km', type=float, default=10.0,
+                        help='机场邻近度阈值（公里）')
     args = parser.parse_args()
 
     allowed_ids = _build_allowed_ids(args)
@@ -398,7 +417,11 @@ def main():
         args.max_hole_size,
         args.gap_mode,
         req_cols,
-        allowed_ids=allowed_ids
+        allowed_ids=allowed_ids,
+        airport_filter=args.airport_filter,
+        airport_threshold_km=args.airport_threshold_km,
+        flights_parquet=args.flights_parquet,
+        airports_parquet=args.airports_parquet,
     )
 
 

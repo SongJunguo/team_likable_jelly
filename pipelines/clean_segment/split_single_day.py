@@ -22,6 +22,7 @@ import os
 
 import numpy as np
 import pandas as pd
+from airport_proximity_filter import filter_by_airport_proximity
 
 
 DEFAULT_REQ_COLS = ["latitude", "longitude", "altitude"]
@@ -128,6 +129,13 @@ def main():
     parser.add_argument('--min-duration', type=int, default=120, help='最小时长（秒）')
     parser.add_argument('--gap-mode', choices=['split', 'drop'], default='split',
                         help='gap处理方式：split=切段，drop=存在gap则丢弃整条轨迹')
+    parser.add_argument('--airport-filter', action='store_true', help='启用机场邻近度过滤')
+    parser.add_argument('--airport-threshold-km', type=float, default=10.0,
+                        help='机场邻近度阈值（公里）')
+    parser.add_argument('--flights-parquet', default="opensky_2024_PRC_dataset/flights/challenge_set.parquet",
+                        help='航班元数据（默认 challenge_set.parquet）')
+    parser.add_argument('--airports-parquet', default="opensky_2024_PRC_dataset/airports_tz.parquet",
+                        help='机场信息（包含坐标）')
     args = parser.parse_args()
 
     print(f"▶️  切分: {os.path.basename(args.t_in)}")
@@ -135,6 +143,19 @@ def main():
     # 读取过滤后数据
     df = pd.read_parquet(args.t_in)
     print(f"    输入: {len(df):,} 行, {df['flight_id'].nunique()} 个航班")
+
+    if args.airport_filter:
+        print("    机场邻近过滤...")
+        df = filter_by_airport_proximity(
+            df,
+            flights_parquet=args.flights_parquet,
+            airports_parquet=args.airports_parquet,
+            threshold_km=args.airport_threshold_km,
+        )
+        if df.empty:
+            print("    ⚠️  机场邻近过滤后无有效航班")
+            pd.DataFrame().to_parquet(args.t_out, index=False)
+            return
 
     # 切分
     required_cols = _parse_req_cols(args.req_cols)

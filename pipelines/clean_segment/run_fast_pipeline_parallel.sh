@@ -91,6 +91,7 @@ echo "并行worker数: $WORKERS（每个文件内并行）"
 echo "平滑系数: $SMOOTH_VAL"
 echo "最大插值间隔: $MAX_HOLE_SIZE"
 echo "元数据筛选: europe_only=${META_EUROPE_ONLY}, top_airports=${META_TOP_AIRPORTS}, top_aircraft=${META_TOP_AIRCRAFT}"
+echo "机场邻近过滤: enable=${AIRPORT_PROXIMITY_ENABLE:-0}, threshold_km=${AIRPORT_PROXIMITY_THRESHOLD_KM:-10}"
 echo ""
 echo "并行策略："
 echo "  - 文件级：串行（一个一个处理）"
@@ -198,6 +199,11 @@ process_one_file() {
     [[ -n "${META_EUROPE_CONTINENT:-}" ]] && meta_args+=(--europe-continent "$META_EUROPE_CONTINENT")
     [[ -n "${META_PROCS:-}" ]] && meta_args+=(--meta-procs "$META_PROCS")
 
+    local airport_args=()
+    if [[ "${AIRPORT_PROXIMITY_ENABLE:-0}" == "1" ]]; then
+        airport_args+=(--airport-filter --airport-threshold-km "${AIRPORT_PROXIMITY_THRESHOLD_KM:-10}")
+    fi
+
     if python "$PY_FAST" \
         -t_in "$in_f" \
         -t_out "$out_f" \
@@ -208,7 +214,8 @@ process_one_file() {
         --min-duration "$MIN_DURATION" \
         --max-hole-size "$MAX_HOLE_SIZE" \
         --workers "$actual_workers" \
-        "${meta_args[@]}" > "$log" 2>&1
+        "${meta_args[@]}" \
+        "${airport_args[@]}" > "$log" 2>&1
     then
         echo "  ✅ 完成: $d"
         return 0
