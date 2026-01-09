@@ -20,6 +20,7 @@ trajectory_statistics_analysis/
 ├── optimized_airport_analysis.py      # 优化的机场完整性分析（主要）
 ├── run_full_airport_analysis.py       # 运行完整机场分析
 ├── analyze_trajectory_completeness.py # 轨迹完整性分析
+├── interpolated_airport_proximity.py  # 插值轨迹起终点机场邻近度统计
 ├── match_official_flight_data.py      # 官方航班数据匹配
 ├── generate_comprehensive_report.py   # 综合报告生成器
 ├── FINAL_ANALYSIS_SUMMARY.md          # 最终分析总结
@@ -62,14 +63,32 @@ python optimized_airport_analysis.py
 python analyze_trajectory_completeness.py --data-dir /path/to/trajectory/data
 ```
 
-### 4. 官方航班数据匹配
+### 4. 插值轨迹起终点机场邻近度统计
+
+```bash
+# 统计 interpolated_clean_eu_v4 起终点到官方机场的距离
+python interpolated_airport_proximity.py \
+  --trajectory-dir opensky_2024_PRC_dataset/interpolated_clean_eu_v4 \
+  --flights-file opensky_2024_PRC_dataset/flights/challenge_set.parquet \
+  --airports-file opensky_2024_PRC_dataset/airports_tz.parquet \
+  --output-file reports/interpolated_clean_eu_v4_airport_proximity.parquet \
+  --distance-threshold-km 50
+```
+
+输出字段（核心）：
+- `start_distance_km`: 轨迹起点到起飞机场（adep）的距离
+- `end_distance_km`: 轨迹终点到降落机场（ades）的距离
+- `complete_by_threshold`: 起终点距离同时 ≤ 阈值
+说明：脚本按 `original_flight_id` 聚合，并使用其匹配 `challenge_set.parquet` 的 `adep/ades`。
+
+### 5. 官方航班数据匹配
 
 ```bash
 # 匹配官方航班数据
 python match_official_flight_data.py --data-dir /path/to/data
 ```
 
-### 5. 生成综合报告
+### 6. 生成综合报告
 
 ```bash
 # 生成综合分析报告
