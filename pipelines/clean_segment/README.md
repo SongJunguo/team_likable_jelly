@@ -223,6 +223,7 @@ MIN_DURATION=120           # 最小segment时长（秒）
 MAX_HOLE_SIZE="$MAX_DT"    # 最大插值间隔，默认与MAX_DT保持一致，可单独调整
 ```
 说明：`REQ_COLS` 会由 `02_split_by_time.sh` / `run_fast_pipeline.sh` 透传给切分脚本（参数 `--req-cols`）。
+点数统计（`run_raw_filtered_point_stats.sh`）会使用相同的 `REQ_COLS` 作为缺失统计列，若某列不存在则按该列 100% 缺失计。
 
 ### 插值参数
 ```bash

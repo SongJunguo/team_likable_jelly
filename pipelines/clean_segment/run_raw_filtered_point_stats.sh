@@ -39,6 +39,7 @@ echo "    Raw       : ${RAW_DIR:-<未提供>}"
 echo "    Filtered  : ${FILTERED_DIR:-<未提供>}"
 echo "    Segmented : ${SEGMENTED_DIR:-<未提供>}"
 echo "    Interp    : ${INTERPOLATED_DIR:-<未提供>}"
+echo "    Req cols  : ${REQ_COLS:-latitude longitude altitude}"
 echo "    Output CSV: ${OUTPUT_CSV}"
 
 ARGS=(
@@ -70,6 +71,9 @@ if [[ "${ENABLE_INTERPOLATED}" == "1" && -n "${INTERPOLATED_DIR}" && -d "${INTER
   ARGS+=(--interpolated-dir "${INTERPOLATED_DIR}")
 else
   ARGS+=(--skip-interpolated)
+fi
+if [[ -n "${REQ_COLS:-}" ]]; then
+  ARGS+=(--req-cols "${REQ_COLS}")
 fi
 
 python "${PYTHON_SCRIPT}" "${ARGS[@]}"

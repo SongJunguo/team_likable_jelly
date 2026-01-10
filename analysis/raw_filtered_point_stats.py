@@ -3,7 +3,7 @@
 多目录轨迹统计：
 - raw / filtered / segmented / interpolated 的文件数、总点数、体积
 - raw vs filtered 的点数保留率
-- 经/纬/高（latitude, longitude, altitude）以及任一列缺失的数量与比例
+- 指定列（默认 latitude/longitude/altitude）以及任一列缺失的数量与比例
 - 同一个 CSV 输出汇总与逐文件缺失情况
 """
 
@@ -37,7 +37,7 @@ INTERPOLATED_DEFAULT = Path(
     "/opensky_2024_PRC_dataset/interpolated_clean__PCA_v3"
 )
 
-COLUMNS: Tuple[str, ...] = ("latitude", "longitude", "altitude")
+DEFAULT_COLUMNS: Tuple[str, ...] = ("latitude", "longitude", "altitude")
 
 
 @dataclass
@@ -54,7 +54,7 @@ class DatasetStats:
     files: int = 0
     total_points: int = 0
     total_size: int = 0
-    nan_counts: Dict[str, int] = field(default_factory=lambda: {col: 0 for col in COLUMNS})
+    nan_counts: Dict[str, int] = field(default_factory=dict)
     any_nan: int = 0
 
 
@@ -64,6 +64,7 @@ class DatasetResult:
     path: Path
     stats: DatasetStats
     files: List[FileSummary]
+    columns: Tuple[str, ...]
 
 
 def _iter_parquet_files(directory: Path) -> List[Path]:
@@ -87,11 +88,14 @@ def _analyze_file(args: Tuple[Path, Tuple[str, ...]]) -> FileSummary:
     parquet = pq.ParquetFile(str(file_path))
     num_rows = parquet.metadata.num_rows
     size = file_path.stat().st_size
-    table = parquet.read(columns=list(columns))
+    schema_cols = set(parquet.schema.names)
+    present_cols = [col for col in columns if col in schema_cols]
+    missing_cols = [col for col in columns if col not in schema_cols]
+    table = parquet.read(columns=list(present_cols)) if present_cols else None
 
-    nan_counts: Dict[str, int] = {}
+    nan_counts: Dict[str, int] = {col: 0 for col in columns}
     any_mask = None
-    for column_name in columns:
+    for column_name in present_cols:
         column = table[column_name].combine_chunks()
         null_mask = pc.is_null(column)
         nan_mask = pc.is_nan(column) if patypes.is_floating(column.type) else None
@@ -110,7 +114,13 @@ def _analyze_file(args: Tuple[Path, Tuple[str, ...]]) -> FileSummary:
                 temp = pc.fill_null(temp, False)
             any_mask = temp
 
-    any_nan = int(pc.sum(pc.cast(any_mask, "int64")).as_py()) if any_mask is not None else 0
+    for column_name in missing_cols:
+        nan_counts[column_name] = num_rows
+
+    if missing_cols:
+        any_nan = num_rows
+    else:
+        any_nan = int(pc.sum(pc.cast(any_mask, "int64")).as_py()) if any_mask is not None else 0
 
     return FileSummary(
         file_name=file_path.name,
@@ -135,6 +145,7 @@ def _within_range(file_name: str, date_from: Optional[str], date_to: Optional[st
 def _collect_dataset_stats(
     directory: Path,
     max_workers: Optional[int],
+    columns: Tuple[str, ...],
     allowed_files: Optional[Sequence[str]] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
@@ -153,11 +164,14 @@ def _collect_dataset_stats(
         else min(len(files), max(mp.cpu_count() - 2, 1), 64)
     )
 
-    stats = DatasetStats(files=len(files))
+    stats = DatasetStats(
+        files=len(files),
+        nan_counts={col: 0 for col in columns},
+    )
     summaries: List[FileSummary] = []
     with ProcessPoolExecutor(max_workers=workers) as executor:
         futures = {
-            executor.submit(_analyze_file, (path, COLUMNS)): path for path in files
+            executor.submit(_analyze_file, (path, columns)): path for path in files
         }
         for future in as_completed(futures):
             summary = future.result()
@@ -165,7 +179,7 @@ def _collect_dataset_stats(
             stats.total_points += summary.points
             stats.total_size += summary.file_size
             stats.any_nan += summary.any_nan
-            for col in COLUMNS:
+            for col in columns:
                 stats.nan_counts[col] += summary.nan_counts[col]
 
     summaries.sort(key=lambda item: item.file_name)
@@ -210,8 +224,8 @@ def _build_dataset_report_text(result: DatasetResult) -> str:
         f"Total size:    {_format_gb(stats.total_size)}",
         "-" * 60,
     ]
-    for col in COLUMNS:
-        count = stats.nan_counts[col]
+    for col in result.columns:
+        count = stats.nan_counts.get(col, 0)
         lines.append(f"{col:<10}: {count:,} rows ({_format_percent(count, stats.total_points)})")
     lines.append(f"{'any_nan':<10}: {stats.any_nan:,} rows ({_format_percent(stats.any_nan, stats.total_points)})")
     return "\n".join(lines)
@@ -244,24 +258,16 @@ def _build_total_ratio_text(datasets: Sequence[DatasetResult]) -> Optional[str]:
     return "\n".join(lines)
 
 
-def _save_ratio_csv(results: Sequence[DatasetResult], output_path: Path) -> None:
+def _save_ratio_csv(results: Sequence[DatasetResult], output_path: Path, columns: Tuple[str, ...]) -> None:
     import csv
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    header = [
-        "dataset",
-        "file_name",
-        "total_points",
-        "latitude_nan_count",
-        "longitude_nan_count",
-        "altitude_nan_count",
-        "any_nan_count",
-        "latitude_nan_ratio",
-        "longitude_nan_ratio",
-        "altitude_nan_ratio",
-        "any_nan_ratio",
-        "point_ratio",
-    ]
+    header = ["dataset", "file_name", "total_points"]
+    header.extend([f"{col}_nan_count" for col in columns])
+    header.append("any_nan_count")
+    header.extend([f"{col}_nan_ratio" for col in columns])
+    header.append("any_nan_ratio")
+    header.append("point_ratio")
 
     def ratio_row(
         label: str,
@@ -272,16 +278,14 @@ def _save_ratio_csv(results: Sequence[DatasetResult], output_path: Path) -> None
         dataset_total: int,
     ) -> List[str]:
         total = points or 1
-        ratios = [counts[col] / total for col in COLUMNS]
+        ratios = [counts.get(col, 0) / total for col in columns]
         ratios.append(any_nan / total)
         share = points / dataset_total if dataset_total else 0.0
         return [
             label,
             file_name,
             str(points),
-            str(counts["latitude"]),
-            str(counts["longitude"]),
-            str(counts["altitude"]),
+            *[str(counts.get(col, 0)) for col in columns],
             str(any_nan),
             *[f"{value:.10f}" for value in ratios],
             f"{share:.10f}",
@@ -319,7 +323,7 @@ def _save_ratio_csv(results: Sequence[DatasetResult], output_path: Path) -> None
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="统计 raw/filtered/segmented/interpolated 的点数与经纬高缺失情况（多进程）"
+        description="统计 raw/filtered/segmented/interpolated 的点数与指定列缺失情况（多进程）"
     )
     parser.add_argument("--raw-dir", type=Path, default=RAW_DEFAULT, help="原始数据目录（可选）")
     parser.add_argument("--filtered-dir", type=Path, default=FILTERED_DEFAULT, help="过滤后目录（可选）")
@@ -344,10 +348,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-filtered", action="store_true", help="跳过 filtered 目录")
     parser.add_argument("--skip-segmented", action="store_true", help="跳过 segmented 目录")
     parser.add_argument("--skip-interpolated", action="store_true", help="跳过 interpolated 目录")
+    parser.add_argument("--req-cols", default=None, help="统计列（空格分隔，默认 latitude longitude altitude）")
     return parser.parse_args()
 
 
-def _gather_datasets(args: argparse.Namespace) -> List[DatasetResult]:
+def _parse_columns(value: Optional[str]) -> Tuple[str, ...]:
+    if value is None:
+        return DEFAULT_COLUMNS
+    cols = [c for c in value.split() if c]
+    if not cols:
+        raise ValueError("req-cols 不能为空")
+    return tuple(cols)
+
+
+def _gather_datasets(args: argparse.Namespace, columns: Tuple[str, ...]) -> List[DatasetResult]:
     dataset_info = {
         "raw": (args.raw_dir, args.skip_raw),
         "filtered": (args.filtered_dir, args.skip_filtered),
@@ -368,10 +382,11 @@ def _gather_datasets(args: argparse.Namespace) -> List[DatasetResult]:
                 stats, files = _collect_dataset_stats(
                     path,
                     args.max_workers,
+                    columns,
                     date_from=args.from_date,
                     date_to=args.to_date,
                 )
-                results["filtered"] = DatasetResult("filtered", path, stats, files)
+                results["filtered"] = DatasetResult("filtered", path, stats, files, columns)
                 allowed_files = [f.file_name for f in files]
             except FileNotFoundError as exc:
                 print(f"[WARN] Skip filtered: {exc}")
@@ -393,6 +408,7 @@ def _gather_datasets(args: argparse.Namespace) -> List[DatasetResult]:
             stats, files = _collect_dataset_stats(
                 path_obj,
                 args.max_workers,
+                columns,
                 file_filter,
                 args.from_date,
                 args.to_date,
@@ -400,14 +416,15 @@ def _gather_datasets(args: argparse.Namespace) -> List[DatasetResult]:
         except FileNotFoundError as exc:
             print(f"[WARN] Skip {label}: {exc}")
             continue
-        results[label] = DatasetResult(label=label, path=path_obj, stats=stats, files=files)
+        results[label] = DatasetResult(label=label, path=path_obj, stats=stats, files=files, columns=columns)
 
     return [results[label] for label in order if label in results]
 
 
 def main() -> None:
     args = parse_args()
-    datasets = _gather_datasets(args)
+    columns = _parse_columns(args.req_cols)
+    datasets = _gather_datasets(args, columns)
     if not datasets:
         raise SystemExit("未找到可用的数据目录")
 
@@ -429,7 +446,7 @@ def main() -> None:
         summary_lines.append(report_text)
 
     if args.output_csv:
-        _save_ratio_csv(datasets, args.output_csv)
+        _save_ratio_csv(datasets, args.output_csv, columns)
         print(f"\n统计结果已写入: {args.output_csv}")
 
     if args.summary_txt:

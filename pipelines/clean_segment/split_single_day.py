@@ -19,10 +19,17 @@
 
 import argparse
 import os
+import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from airport_proximity_filter import filter_by_airport_proximity
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from pipelines.clean_segment.airport_proximity_filter import filter_by_airport_proximity
 
 
 DEFAULT_REQ_COLS = ["latitude", "longitude", "altitude"]
