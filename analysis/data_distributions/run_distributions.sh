@@ -13,6 +13,10 @@ usage() {
   --date-to YYYY-MM-DD                  结束日期（默认 2022-02-28）
   --label LABEL                         输出子目录名（可选）
   --out-root PATH                       输出根目录（可选）
+  --delta-columns COLS                 delta 列（可重复或逗号分隔；如 all）
+  --delta-bin-width COL:WIDTH          delta bin 宽度（可重复）
+  --delta-max COL:MAX                  delta 最大值（可重复）
+  --delta-diff-mode {abs|signed}       delta 差值模式（可选）
   -h, --help                            显示帮助
 
 说明:
@@ -27,6 +31,10 @@ DATE_FROM="2022-01-01"
 DATE_TO="2022-02-28"
 LABEL=""
 OUT_ROOT=""
+DELTA_COLUMNS=()
+DELTA_BIN_WIDTH=()
+DELTA_MAX=()
+DELTA_DIFF_MODE=""
 EXTRA_ARGS=()
 
 while [ $# -gt 0 ]; do
@@ -53,6 +61,22 @@ while [ $# -gt 0 ]; do
       ;;
     --out-root)
       OUT_ROOT="$2"
+      shift 2
+      ;;
+    --delta-columns)
+      DELTA_COLUMNS+=("$2")
+      shift 2
+      ;;
+    --delta-bin-width)
+      DELTA_BIN_WIDTH+=("$2")
+      shift 2
+      ;;
+    --delta-max)
+      DELTA_MAX+=("$2")
+      shift 2
+      ;;
+    --delta-diff-mode)
+      DELTA_DIFF_MODE="$2"
       shift 2
       ;;
     -h|--help)
@@ -117,6 +141,18 @@ if [ -n "$OUT_ROOT" ]; then
 fi
 if [ -n "$LABEL" ]; then
   args+=(--label "$LABEL")
+fi
+for item in "${DELTA_COLUMNS[@]}"; do
+  args+=(--delta-columns "$item")
+done
+for item in "${DELTA_BIN_WIDTH[@]}"; do
+  args+=(--delta-bin-width "$item")
+done
+for item in "${DELTA_MAX[@]}"; do
+  args+=(--delta-max "$item")
+done
+if [ -n "$DELTA_DIFF_MODE" ]; then
+  args+=(--delta-diff-mode "$DELTA_DIFF_MODE")
 fi
 
 echo "[INFO] filter=$FILTER data_dir=$DATA_DIR"

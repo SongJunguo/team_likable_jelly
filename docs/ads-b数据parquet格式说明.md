@@ -202,7 +202,11 @@
   - `altitude`：[-1000, 45000] ft
   - `vertical_rate` / `daltitude`：[-5000, 5000] ft/min
 - delta（相邻点差值）直方图：默认开启（`--delta-hist`），只在同一 `flight_id`（若不存在则使用 `original_flight_id`）内且 `timestamp` 差值**严格为 1 秒**的相邻点上计算（可用 `--delta-required-dt-seconds` 覆盖）
+- delta 差值模式：默认 `abs`（绝对差，非负）；使用 `--delta-diff-mode signed` 可保留正负差值。`track` 会使用环绕差值（范围 [-180, 180]）。
+- delta 列选择：默认使用**所有数值列**（会排除 `timestamp/flight_id/original_flight_id/icao24/segment_index`）。可用 `--delta-columns` 指定列（逗号分隔或可重复），`--delta-columns all` 表示所有数值列。一旦**显式指定** `--delta-columns`，需要对每一列提供 `--delta-bin-width col:width` 与 `--delta-max col:max`。
+- 若默认列中缺少 bin/max 配置，则该列会被自动跳过。
 - `delta_vertical_rate`：bin=1 ft/min，max=2000 ft/min（可用 `--delta-bin-width/--delta-max` 覆盖）
+- 其他常用 delta 默认（可覆盖）：`delta_altitude`(25,2000)、`delta_groundspeed`(1,50)、`delta_wind`(0.05,5)、`delta_gsx/gsy/tasx/tasy/tas/TAS`(1,50)、`delta_daltitude`(32,2000)
 - 航班过滤（可选）：`--flight-filter eu_meta` 仅统计起降机场都在欧洲（`continent=EU`）的轨迹。
   - 自动选择 `flight_id` 列：优先 `original_flight_id`，其次 `flight_id`，也可用 `--flight-id-col` 强制指定。
   - 过滤后 bins、热力图范围、统计结果均基于过滤数据计算。
@@ -308,6 +312,23 @@ python analysis/data_distributions/plot_adsb_parquet_distributions.py \
   --data-dir opensky_2024_PRC_dataset/rawtrajectories \
   --date-from 2022-01-01 --date-to 2022-01-01 \
   --no-delta-hist
+```
+
+---
+
+### 8.4 轨迹可视化（单航班）
+
+脚本：`analysis/trajectory_visualization/plot_trajectory_pdf.py`  
+功能：输出单航班所有数值列的原始值与相邻点差分（PDF 每列一页）。
+
+示例：
+
+```bash
+bash analysis/trajectory_visualization/run_trajectory_viz.sh \
+  --flight-id 123456789 \
+  --data-dir opensky_2024_PRC_dataset/interpolated_clean_eu_v5 \
+  --date-from 2022-01-01 \
+  --date-to 2022-02-28
 ```
 
 ---

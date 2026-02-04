@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
+import pyarrow as pa
 import pyarrow.parquet as pq
 
 DEFAULT_DATA_DIR = Path("opensky_2024_PRC_dataset/rawtrajectories")
@@ -92,11 +93,28 @@ DELTA_DEFAULTS = {
     "latitude": {"bin_width": 1e-5, "max": 0.02, "circular": False},
     "longitude": {"bin_width": 1e-5, "max": 0.02, "circular": False},
     "track": {"bin_width": 0.01, "max": 10.0, "circular": True},
+    "altitude": {"bin_width": 25.0, "max": 2000.0, "circular": False},
+    "groundspeed": {"bin_width": 1.0, "max": 50.0, "circular": False},
     "vertical_rate": {"bin_width": 1.0, "max": 2000.0, "circular": False},
+    "daltitude": {"bin_width": 32.0, "max": 2000.0, "circular": False},
+    "gsx": {"bin_width": 1.0, "max": 50.0, "circular": False},
+    "gsy": {"bin_width": 1.0, "max": 50.0, "circular": False},
+    "tasx": {"bin_width": 1.0, "max": 50.0, "circular": False},
+    "tasy": {"bin_width": 1.0, "max": 50.0, "circular": False},
+    "tas": {"bin_width": 1.0, "max": 50.0, "circular": False},
+    "TAS": {"bin_width": 1.0, "max": 50.0, "circular": False},
+    "wind": {"bin_width": 0.05, "max": 5.0, "circular": False},
     "u_component_of_wind": {"bin_width": 0.05, "max": 5.0, "circular": False},
     "v_component_of_wind": {"bin_width": 0.05, "max": 5.0, "circular": False},
     "temperature": {"bin_width": 0.05, "max": 5.0, "circular": False},
     "specific_humidity": {"bin_width": 1e-4, "max": 0.01, "circular": False},
+}
+DELTA_ALL_EXCLUDED = {
+    "timestamp",
+    "flight_id",
+    "original_flight_id",
+    "icao24",
+    "segment_index",
 }
 
 _CONTINENTS_GDF_CACHE: Optional[object] = None
@@ -340,6 +358,43 @@ def _build_hist_specs(
     return specs
 
 
+def _infer_numeric_columns(schema: pa.Schema) -> List[str]:
+    numeric: List[str] = []
+    for field in schema:
+        ftype = field.type
+        if pa.types.is_integer(ftype) or pa.types.is_floating(ftype) or pa.types.is_decimal(
+            ftype
+        ):
+            numeric.append(field.name)
+    return numeric
+
+
+def _parse_column_list(items: Sequence[str]) -> List[str]:
+    cols: List[str] = []
+    for item in items:
+        for part in item.split(","):
+            name = part.strip()
+            if name:
+                cols.append(name)
+    return cols
+
+
+def _parse_delta_overrides(items: Sequence[str], flag: str) -> Dict[str, float]:
+    values: Dict[str, float] = {}
+    for item in items:
+        parts = item.split(":")
+        if len(parts) != 2:
+            raise ValueError(f"{flag} 格式错误: {item}（期望 <col>:<value>）")
+        col, value_s = parts
+        if not col:
+            raise ValueError(f"{flag} 列名为空: {item}")
+        value = float(value_s)
+        if not (value > 0):
+            raise ValueError(f"{flag} 必须为正数: {item}")
+        values[col] = value
+    return values
+
+
 def _process_file_chunk(
     args: Tuple[
         List[str],
@@ -350,6 +405,7 @@ def _process_file_chunk(
         Optional[np.ndarray],
         Optional[str],
         Optional[str],
+        str,
     ]
 ) -> ChunkResult:
     (
@@ -361,10 +417,12 @@ def _process_file_chunk(
         allowed_ids,
         flight_id_col,
         delta_fid_col,
+        delta_diff_mode,
     ) = args
     columns_hist = [spec.column for spec in specs]
     delta_enabled = bool(delta_specs)
     filter_enabled = allowed_ids is not None
+    delta_signed = delta_diff_mode == "signed"
     if delta_enabled and not delta_fid_col:
         raise RuntimeError("delta_fid_col 为空，无法计算 delta-hist")
 
@@ -497,9 +555,15 @@ def _process_file_chunk(
                     if mask.any():
                         if dspec.circular:
                             diff = val_curr[mask] - val_prev[mask]
-                            delta = np.abs(((diff + 180.0) % 360.0) - 180.0)
+                            if delta_signed:
+                                delta = ((diff + 180.0) % 360.0) - 180.0
+                            else:
+                                delta = np.abs(((diff + 180.0) % 360.0) - 180.0)
                         else:
-                            delta = np.abs(val_curr[mask] - val_prev[mask])
+                            if delta_signed:
+                                delta = val_curr[mask] - val_prev[mask]
+                            else:
+                                delta = np.abs(val_curr[mask] - val_prev[mask])
 
                         bin_idx = np.floor((delta - dspec.start) / dspec.width).astype(
                             np.int64
@@ -528,9 +592,15 @@ def _process_file_chunk(
                         if math.isfinite(v_prev) and math.isfinite(v_curr):
                             if dspec.circular:
                                 diff = v_curr - v_prev
-                                delta0 = abs(((diff + 180.0) % 360.0) - 180.0)
+                                if delta_signed:
+                                    delta0 = ((diff + 180.0) % 360.0) - 180.0
+                                else:
+                                    delta0 = abs(((diff + 180.0) % 360.0) - 180.0)
                             else:
-                                delta0 = abs(v_curr - v_prev)
+                                if delta_signed:
+                                    delta0 = v_curr - v_prev
+                                else:
+                                    delta0 = abs(v_curr - v_prev)
                             bin0 = int(math.floor((delta0 - dspec.start) / dspec.width))
                             if 0 <= bin0 < dspec.bins:
                                 delta_counts[d_idx][bin0] += np.uint64(1)
@@ -1301,48 +1371,69 @@ def _render_lat_lon_heatmap(
 
 
 def _build_delta_specs(
+    selected_columns: Sequence[str],
     available_cols: set[str],
     overrides_bin_width: Sequence[str],
     overrides_max: Sequence[str],
+    diff_mode: str,
+    require_overrides: bool,
 ) -> List[DeltaHistogramSpec]:
-    delta_bin_widths = {k: float(v["bin_width"]) for k, v in DELTA_DEFAULTS.items()}
-    delta_max = {k: float(v["max"]) for k, v in DELTA_DEFAULTS.items()}
+    if diff_mode not in {"abs", "signed"}:
+        raise ValueError(f"不支持的 delta_diff_mode: {diff_mode}（可选：abs,signed）")
+    delta_bin_widths = _parse_delta_overrides(overrides_bin_width, "--delta-bin-width")
+    delta_max = _parse_delta_overrides(overrides_max, "--delta-max")
 
-    for item in overrides_bin_width:
-        parts = item.split(":")
-        if len(parts) != 2:
-            raise ValueError(f"--delta-bin-width 格式错误: {item}（期望 <col>:<width>）")
-        col, width_s = parts
-        if col not in delta_bin_widths:
-            raise ValueError(
-                f"--delta-bin-width 不支持列: {col}（可选：{sorted(delta_bin_widths.keys())}）"
-            )
-        width = float(width_s)
-        if not (width > 0):
-            raise ValueError(f"--delta-bin-width 宽度必须为正数: {item}")
-        delta_bin_widths[col] = width
+    selected = list(dict.fromkeys(selected_columns))
+    if not selected:
+        return []
+    selected_set = set(selected)
 
-    for item in overrides_max:
-        parts = item.split(":")
-        if len(parts) != 2:
-            raise ValueError(f"--delta-max 格式错误: {item}（期望 <col>:<max>）")
-        col, max_s = parts
-        if col not in delta_max:
-            raise ValueError(
-                f"--delta-max 不支持列: {col}（可选：{sorted(delta_max.keys())}）"
-            )
-        max_v = float(max_s)
-        if not (max_v > 0):
-            raise ValueError(f"--delta-max 必须为正数: {item}")
-        delta_max[col] = max_v
+    extra_width = sorted(set(delta_bin_widths.keys()) - selected_set)
+    extra_max = sorted(set(delta_max.keys()) - selected_set)
+    if extra_width:
+        raise ValueError(f"--delta-bin-width 包含未选择的列: {extra_width}")
+    if extra_max:
+        raise ValueError(f"--delta-max 包含未选择的列: {extra_max}")
+
+    signed = diff_mode == "signed"
+    missing_width: List[str] = []
+    missing_max: List[str] = []
 
     specs: List[DeltaHistogramSpec] = []
-    for src, cfg in DELTA_DEFAULTS.items():
+    for src in selected:
         if src not in available_cols:
+            raise ValueError(f"delta 列不存在于数据中: {src}")
+        cfg = DELTA_DEFAULTS.get(src, {})
+        width = delta_bin_widths.get(src)
+        max_v = delta_max.get(src)
+        if width is None:
+            if require_overrides:
+                missing_width.append(src)
+            elif "bin_width" in cfg:
+                width = float(cfg["bin_width"])
+            else:
+                missing_width.append(src)
+        if max_v is None:
+            if require_overrides:
+                missing_max.append(src)
+            elif "max" in cfg:
+                max_v = float(cfg["max"])
+            else:
+                missing_max.append(src)
+        if width is None or max_v is None:
             continue
-        width = float(delta_bin_widths[src])
-        max_v = float(delta_max[src])
-        bins = int(math.floor((max_v - 0.0) / width + 1e-12)) + 1
+        width = float(width)
+        max_v = float(max_v)
+        if not (width > 0):
+            raise ValueError(f"delta bin 宽度必须为正数: {src}={width}")
+        if not (max_v > 0):
+            raise ValueError(f"delta max 必须为正数: {src}={max_v}")
+        if signed:
+            start = -max_v
+            bins = int(math.floor((2.0 * max_v) / width + 1e-12)) + 1
+        else:
+            start = 0.0
+            bins = int(math.floor((max_v - 0.0) / width + 1e-12)) + 1
         bins = max(bins, 1)
         out_col = f"delta_{src}"
         UNITS[out_col] = UNITS.get(src, "")
@@ -1350,13 +1441,24 @@ def _build_delta_specs(
             DeltaHistogramSpec(
                 column=out_col,
                 source_column=src,
-                start=0.0,
+                start=start,
                 width=width,
                 bins=bins,
                 circular=bool(cfg.get("circular", False)),
                 max_value=max_v,
             )
         )
+    if require_overrides:
+        if missing_width:
+            raise ValueError(
+                "缺少 --delta-bin-width: "
+                f"{sorted(missing_width)}（已选 delta 列需要显式指定）"
+            )
+        if missing_max:
+            raise ValueError(
+                "缺少 --delta-max: "
+                f"{sorted(missing_max)}（已选 delta 列需要显式指定）"
+            )
     return specs
 
 
@@ -1440,6 +1542,15 @@ def main() -> int:
         help="是否输出相邻点差值（delta）直方图（默认：开启）",
     )
     parser.add_argument(
+        "--delta-columns",
+        action="append",
+        default=[],
+        help=(
+            "指定参与 delta 直方图的列（逗号分隔或可重复），"
+            "使用 all 表示所有数值列（默认：所有数值列，排除 ID/索引列）"
+        ),
+    )
+    parser.add_argument(
         "--delta-required-dt-seconds",
         type=float,
         default=1.0,
@@ -1449,13 +1560,26 @@ def main() -> int:
         "--delta-bin-width",
         action="append",
         default=[],
-        help="覆盖 delta 直方图 bin 宽度：<col>:<width>（col 为原始列名，如 latitude；可重复）",
+        help=(
+            "delta 直方图 bin 宽度：<col>:<width>（col 为原始列名，如 latitude；可重复；"
+            "当使用 --delta-columns 时需为每列显式提供）"
+        ),
     )
     parser.add_argument(
         "--delta-max",
         action="append",
         default=[],
-        help="覆盖 delta 直方图最大值：<col>:<max>（col 为原始列名；可重复）",
+        help=(
+            "delta 直方图最大值：<col>:<max>（col 为原始列名；可重复；"
+            "当使用 --delta-columns 时需为每列显式提供）"
+        ),
+    )
+    parser.add_argument(
+        "--delta-diff-mode",
+        type=str,
+        default="abs",
+        choices=["abs", "signed"],
+        help="delta 差值计算方式：abs=绝对值，signed=保留正负（默认：abs）",
     )
     parser.add_argument(
         "--hist-yscales",
@@ -1596,6 +1720,7 @@ def main() -> int:
 
     parquet0 = pq.ParquetFile(str(files[0]))
     available_cols = set(parquet0.schema.names)
+    numeric_cols = _infer_numeric_columns(parquet0.schema_arrow)
 
     if args.flight_id_col is not None and args.flight_id_col not in available_cols:
         raise RuntimeError(
@@ -1675,6 +1800,30 @@ def main() -> int:
     delta_specs: List[DeltaHistogramSpec] = []
     required_dt_ns = int(round(args.delta_required_dt_seconds * 1e9))
     if args.delta_hist:
+        delta_columns_requested = _parse_column_list(args.delta_columns)
+        numeric_set = set(numeric_cols)
+        if delta_columns_requested:
+            requested = list(dict.fromkeys(delta_columns_requested))
+            if "all" in requested:
+                if len(requested) > 1:
+                    raise ValueError("--delta-columns all 不能与其他列同时使用")
+                selected_delta_cols = [
+                    c for c in numeric_cols if c not in DELTA_ALL_EXCLUDED
+                ]
+            else:
+                selected_delta_cols = requested
+            if not selected_delta_cols:
+                raise RuntimeError("delta-columns 为空，无法计算 delta-hist")
+            non_numeric = [c for c in selected_delta_cols if c not in numeric_set]
+            if non_numeric:
+                raise ValueError(f"--delta-columns 包含非数值列: {non_numeric}")
+            delta_require_overrides = True
+        else:
+            selected_delta_cols = [
+                c for c in numeric_cols if c not in DELTA_ALL_EXCLUDED
+            ]
+            delta_require_overrides = False
+
         delta_fid_col: Optional[str] = None
         if args.flight_id_col is not None:
             delta_fid_col = args.flight_id_col
@@ -1690,7 +1839,12 @@ def main() -> int:
             print("[WARN] 缺少 timestamp，无法计算 delta-hist，已自动跳过")
         else:
             delta_specs = _build_delta_specs(
-                available_cols, args.delta_bin_width, args.delta_max
+                selected_delta_cols,
+                available_cols,
+                args.delta_bin_width,
+                args.delta_max,
+                args.delta_diff_mode,
+                delta_require_overrides,
             )
     else:
         delta_fid_col = None
@@ -1699,6 +1853,7 @@ def main() -> int:
         print(
             f"[INFO] delta_required_dt_seconds={args.delta_required_dt_seconds} (ns={required_dt_ns})"
         )
+        print(f"[INFO] delta_diff_mode={args.delta_diff_mode}")
         print(f"[INFO] delta_flight_id_col={delta_fid_col}")
 
     chunks = _split_into_chunks(files, args.workers)
@@ -1730,6 +1885,7 @@ def main() -> int:
                 allowed_ids,
                 flight_id_col,
                 delta_fid_col,
+                args.delta_diff_mode,
             )
         )
         total_rows += result.total_rows
@@ -1763,6 +1919,7 @@ def main() -> int:
                         allowed_ids,
                         flight_id_col,
                         delta_fid_col,
+                        args.delta_diff_mode,
                     ),
                 )
                 for chunk in chunks
@@ -1877,6 +2034,7 @@ def main() -> int:
             spec.column: {
                 "unit": UNITS.get(spec.column, ""),
                 **asdict(spec),
+                "diff_mode": args.delta_diff_mode,
                 "required_dt_seconds": args.delta_required_dt_seconds,
                 "required_dt_ns": required_dt_ns,
             }
@@ -1884,6 +2042,7 @@ def main() -> int:
         }
         meta["delta_flight_id_col"] = delta_fid_col
         meta["delta_pairs_total"] = int(total_delta_pairs)
+        meta["delta_diff_mode"] = args.delta_diff_mode
     meta["hist_plot"] = {
         "yscales": [s.strip() for s in args.hist_yscales.split(",") if s.strip()],
         "dpi": args.hist_dpi,
