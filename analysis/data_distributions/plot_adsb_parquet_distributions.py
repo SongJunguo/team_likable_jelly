@@ -53,7 +53,7 @@ DEFAULT_BIN_WIDTHS: Dict[str, float] = {
     "tasx": 1.0,
     "tasy": 1.0,
     "tas": 1.0,
-    "daltitude": 32.0,
+    "daltitude": 25.0,
     # xue_processed_raw__v1
     "TAS": 1.0,
 }
@@ -90,19 +90,19 @@ DEFAULT_PLOT_XLIMS: Dict[str, Tuple[float, float]] = {
 }
 
 DELTA_DEFAULTS = {
-    "latitude": {"bin_width": 1e-5, "max": 0.02, "circular": False},
-    "longitude": {"bin_width": 1e-5, "max": 0.02, "circular": False},
+    "latitude": {"bin_width": 1e-6, "max": 0.005, "circular": False},
+    "longitude": {"bin_width": 1e-6, "max": 0.006, "circular": False},
     "track": {"bin_width": 0.01, "max": 10.0, "circular": True},
-    "altitude": {"bin_width": 25.0, "max": 2000.0, "circular": False},
-    "groundspeed": {"bin_width": 1.0, "max": 50.0, "circular": False},
-    "vertical_rate": {"bin_width": 1.0, "max": 2000.0, "circular": False},
-    "daltitude": {"bin_width": 32.0, "max": 2000.0, "circular": False},
-    "gsx": {"bin_width": 1.0, "max": 50.0, "circular": False},
-    "gsy": {"bin_width": 1.0, "max": 50.0, "circular": False},
-    "tasx": {"bin_width": 1.0, "max": 50.0, "circular": False},
-    "tasy": {"bin_width": 1.0, "max": 50.0, "circular": False},
-    "tas": {"bin_width": 1.0, "max": 50.0, "circular": False},
-    "TAS": {"bin_width": 1.0, "max": 50.0, "circular": False},
+    "altitude": {"bin_width": 1.0, "max": 250.0, "circular": False},
+    "groundspeed": {"bin_width": 0.01, "max": 20.0, "circular": False},
+    "vertical_rate": {"bin_width": 0.1, "max": 200.0, "circular": False},
+    "daltitude": {"bin_width": 1.0, "max": 2000.0, "circular": False},
+    "gsx": {"bin_width": 0.01, "max": 20.0, "circular": False},
+    "gsy": {"bin_width": 0.01, "max": 20.0, "circular": False},
+    "tasx": {"bin_width": 0.01, "max": 20.0, "circular": False},
+    "tasy": {"bin_width": 0.01, "max": 20.0, "circular": False},
+    "tas": {"bin_width": 0.01, "max": 20.0, "circular": False},
+    "TAS": {"bin_width": 0.01, "max": 20.0, "circular": False},
     "wind": {"bin_width": 0.05, "max": 5.0, "circular": False},
     "u_component_of_wind": {"bin_width": 0.05, "max": 5.0, "circular": False},
     "v_component_of_wind": {"bin_width": 0.05, "max": 5.0, "circular": False},
@@ -115,6 +115,30 @@ DELTA_ALL_EXCLUDED = {
     "original_flight_id",
     "icao24",
     "segment_index",
+}
+
+MOTION_COLUMNS = {
+    "latitude",
+    "longitude",
+    "altitude",
+    "groundspeed",
+    "track",
+    "vertical_rate",
+    "daltitude",
+    "gsx",
+    "gsy",
+    "tasx",
+    "tasy",
+    "tas",
+    "TAS",
+}
+
+WEATHER_COLUMNS = {
+    "u_component_of_wind",
+    "v_component_of_wind",
+    "wind",
+    "temperature",
+    "specific_humidity",
 }
 
 _CONTINENTS_GDF_CACHE: Optional[object] = None
@@ -804,7 +828,11 @@ def _plot_histograms(
         else:
             ax.set_xlim(spec.start, spec.start + spec.bins * spec.width)
         fig.tight_layout()
-        fig.savefig(out_dir / f"hist_{spec.column}.png")
+        if spec.column.startswith("delta_"):
+            out_name = f"delta_hist_{spec.column[len('delta_'):]}.png"
+        else:
+            out_name = f"hist_{spec.column}.png"
+        fig.savefig(out_dir / out_name)
         plt.close(fig)
 
 
@@ -2134,6 +2162,28 @@ def main() -> int:
     _write_hist_counts_csv(out_dir / "hist_counts.csv", combined_specs, combined_counts)
 
     if not args.no_hist_plots:
+        delta_source_by_col = {s.column: s.source_column for s in delta_specs}
+        motion_specs: List[HistogramSpec] = []
+        motion_counts: List[np.ndarray] = []
+        weather_specs: List[HistogramSpec] = []
+        weather_counts: List[np.ndarray] = []
+        unknown_cols: set[str] = set()
+        for spec, counts in zip(combined_specs, combined_counts):
+            base_col = delta_source_by_col.get(spec.column, spec.column)
+            if base_col in WEATHER_COLUMNS:
+                weather_specs.append(spec)
+                weather_counts.append(counts)
+            else:
+                if base_col not in MOTION_COLUMNS and base_col not in WEATHER_COLUMNS:
+                    unknown_cols.add(base_col)
+                motion_specs.append(spec)
+                motion_counts.append(counts)
+        if unknown_cols:
+            print(
+                "[WARN] 未归类列默认归入 motion："
+                f"{sorted(unknown_cols)}"
+            )
+
         yscales = [s.strip() for s in args.hist_yscales.split(",") if s.strip()]
         invalid = [s for s in yscales if s not in {"linear", "log"}]
         if invalid:
@@ -2148,18 +2198,31 @@ def main() -> int:
             xlims[col] = (float(lo_s), float(hi_s))
 
         for yscale in yscales:
-            plot_dir = out_dir / f"hist_y_{yscale}"
-            _plot_histograms(
-                plot_dir,
-                combined_specs,
-                combined_counts,
-                yscale=yscale,
-                xlims=xlims,
-                dpi=args.hist_dpi,
-            )
+            if motion_specs:
+                plot_dir = out_dir / "motion" / f"hist_y_{yscale}"
+                _plot_histograms(
+                    plot_dir,
+                    motion_specs,
+                    motion_counts,
+                    yscale=yscale,
+                    xlims=xlims,
+                    dpi=args.hist_dpi,
+                )
+            if weather_specs:
+                plot_dir = out_dir / "weather" / f"hist_y_{yscale}"
+                _plot_histograms(
+                    plot_dir,
+                    weather_specs,
+                    weather_counts,
+                    yscale=yscale,
+                    xlims=xlims,
+                    dpi=args.hist_dpi,
+                )
         for legacy in out_dir.glob("hist_*.png"):
             legacy.unlink()
-        print("[INFO] 已生成 1D 直方图 PNG：hist_y_linear/ 与 hist_y_log/（根目录不再输出 hist_<col>.png）")
+        print(
+            "[INFO] 已生成 1D 直方图 PNG：motion/hist_y_*/ 与 weather/hist_y_*/（根目录不再输出 hist_<col>.png）"
+        )
 
     if heatmap_config is not None:
         print(

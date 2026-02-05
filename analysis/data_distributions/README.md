@@ -28,6 +28,10 @@ This folder contains scripts for computing ADS-B parquet field distributions and
 - Delta 默认对所有数值列统计（排除 timestamp/flight_id/original_flight_id/icao24/segment_index）。
 - 若显式指定 --delta-columns（含 all），需要为每个列提供 --delta-bin-width 与 --delta-max。
 - 若默认列中缺少 bin/max 配置，则该列会被自动跳过。
+- 1D 直方图 PNG 会按类别输出到子目录：
+- `motion/hist_y_linear/` 与 `motion/hist_y_log/`
+- `weather/hist_y_linear/` 与 `weather/hist_y_log/`
+- delta 列直方图命名为 `delta_hist_<src>.png`（例如 `delta_hist_latitude.png`）。
 
 ## Examples
 python analysis/data_distributions/plot_adsb_parquet_distributions.py \

@@ -174,8 +174,11 @@
 - `hist_meta.json`：直方图配置（bin 宽度、起点、bins 数）与元数据 min/max
 - `summary.csv`：每列的 valid/missing/mean/std 等汇总
 - `delta_summary.csv`：delta 直方图的 pairs/mean/std 等汇总（仅当开启 delta-hist 且数据中存在 `flight_id/timestamp` 时输出）
-- `hist_y_linear/hist_<col>.png`：每列 1D 直方图（y 轴线性）
-- `hist_y_log/hist_<col>.png`：每列 1D 直方图（y 轴对数）
+- `motion/hist_y_linear/hist_<col>.png`：运动状态列 1D 直方图（y 轴线性）
+- `motion/hist_y_log/hist_<col>.png`：运动状态列 1D 直方图（y 轴对数）
+- `weather/hist_y_linear/hist_<col>.png`：天气列 1D 直方图（y 轴线性）
+- `weather/hist_y_log/hist_<col>.png`：天气列 1D 直方图（y 轴对数）
+- delta 列直方图命名：`delta_hist_<src>.png`（例如 `delta_hist_latitude.png`）
 - `heatmap_lat_lon.png`：`latitude/longitude` 2D 热力图（matplotlib 板式：坐标轴/标题/colorbar，默认 LogNorm + viridis，0 计数留白）
 - `heatmap_lat_lon_raw.png`：`latitude/longitude` 2D 热力图（datashader 裸图，用于对比）
 - `heatmap_lat_lon_mean_altitude.png`：经纬-平均高度热力图（matplotlib 板式，colorbar 单位 ft；若存在 `altitude` 且未禁用）

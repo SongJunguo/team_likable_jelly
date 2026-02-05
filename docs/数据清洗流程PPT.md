@@ -314,7 +314,7 @@ reports/data_distributions/interpolated_clean_eu_v5_eu_meta/2022-01-01__2022-02-
 - `heatmap_lat_lon_mean_altitude.png`
 - `hist_y_linear/hist_*.png`
 - `hist_y_log/hist_*.png`
-- `hist_delta_*.png`
+- `delta_hist_*.png`
 
 ---
 

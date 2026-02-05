@@ -581,7 +581,7 @@ reports/
 | 高度热力图 | `heatmap_lat_lon_mean_altitude.png` |
 | 各变量直方图 (对数) | `hist_y_log/hist_*.png` |
 | 各变量直方图 (线性) | `hist_y_linear/hist_*.png` |
-| 变化量分布图 | `hist_delta_*.png` |
+| 变化量分布图 | `delta_hist_*.png` |
 
 ### 图表路径
 ```
