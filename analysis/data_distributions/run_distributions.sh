@@ -17,6 +17,7 @@ usage() {
   --delta-bin-width COL:WIDTH          delta bin 宽度（可重复）
   --delta-max COL:MAX                  delta 最大值（可重复）
   --delta-diff-mode {abs|signed}       delta 差值模式（可选）
+  --sample-step-seconds SECONDS        时间抽样步长（可选；例如 20）
   -h, --help                            显示帮助
 
 说明:
@@ -35,6 +36,7 @@ DELTA_COLUMNS=()
 DELTA_BIN_WIDTH=()
 DELTA_MAX=()
 DELTA_DIFF_MODE=""
+SAMPLE_STEP_SECONDS=""
 EXTRA_ARGS=()
 
 while [ $# -gt 0 ]; do
@@ -77,6 +79,10 @@ while [ $# -gt 0 ]; do
       ;;
     --delta-diff-mode)
       DELTA_DIFF_MODE="$2"
+      shift 2
+      ;;
+    --sample-step-seconds)
+      SAMPLE_STEP_SECONDS="$2"
       shift 2
       ;;
     -h|--help)
@@ -153,6 +159,9 @@ for item in "${DELTA_MAX[@]}"; do
 done
 if [ -n "$DELTA_DIFF_MODE" ]; then
   args+=(--delta-diff-mode "$DELTA_DIFF_MODE")
+fi
+if [ -n "$SAMPLE_STEP_SECONDS" ]; then
+  args+=(--sample-step-seconds "$SAMPLE_STEP_SECONDS")
 fi
 
 echo "[INFO] filter=$FILTER data_dir=$DATA_DIR"

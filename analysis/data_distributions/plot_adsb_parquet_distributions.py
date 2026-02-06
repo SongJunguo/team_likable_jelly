@@ -32,6 +32,7 @@ DEFAULT_FLIGHTS_META_PATH = Path(
 )
 DEFAULT_AIRPORTS_META_PATH = Path("opensky_2024_PRC_dataset/airports_tz.parquet")
 DEFAULT_EUROPE_CONTINENT = "EU"
+NS_PER_SECOND = 1_000_000_000
 
 
 # 默认仅关注“物理意义明确”的列；只要列在源数据中存在，就会被统计。
@@ -264,16 +265,20 @@ def _scan_column_min_max_filtered(
     flight_id_col: str,
     allowed_ids: np.ndarray,
     batch_size: int,
+    sample_step_ns: Optional[int] = None,
 ) -> Tuple[int, int, Dict[str, ColumnMetaStats]]:
     total_rows = 0
     files_scanned = 0
     min_values: Dict[str, Optional[float]] = {c: None for c in columns}
     max_values: Dict[str, Optional[float]] = {c: None for c in columns}
+    sample_enabled = sample_step_ns is not None
 
     for file_path in files:
         parquet = pq.ParquetFile(str(file_path))
         files_scanned += 1
         read_columns = [flight_id_col] + list(columns)
+        if sample_enabled:
+            read_columns.append("timestamp")
         for batch in parquet.iter_batches(columns=read_columns, batch_size=batch_size):
             fid = batch.column(0).to_numpy(zero_copy_only=False)
             if fid.size == 0:
@@ -283,10 +288,21 @@ def _scan_column_min_max_filtered(
             allowed_mask = np.isin(fid, allowed_ids)
             if not allowed_mask.any():
                 continue
-            total_rows += int(allowed_mask.sum())
+            sample_mask = None
+            if sample_enabled:
+                ts = batch.column(len(read_columns) - 1).to_numpy(zero_copy_only=False)
+                ts = ts[allowed_mask]
+                sample_mask = _compute_time_sampling_mask(ts, sample_step_ns)
+                if sample_mask is not None and not sample_mask.any():
+                    continue
+                total_rows += int(sample_mask.sum())
+            else:
+                total_rows += int(allowed_mask.sum())
             for idx, col in enumerate(columns, start=1):
                 arr = batch.column(idx).to_numpy(zero_copy_only=False)
                 arr = arr[allowed_mask]
+                if sample_mask is not None:
+                    arr = arr[sample_mask]
                 if arr.size == 0:
                     continue
                 finite_mask = np.isfinite(arr)
@@ -309,6 +325,59 @@ def _scan_column_min_max_filtered(
         hi = max_values[col]
         if lo is None or hi is None:
             raise RuntimeError(f"过滤后列 {col} 无有效数据，无法生成直方图")
+        out[col] = ColumnMetaStats(min_value=lo, max_value=hi)
+
+    return files_scanned, total_rows, out
+
+
+def _scan_column_min_max_sampled(
+    files: Sequence[Path],
+    columns: Sequence[str],
+    batch_size: int,
+    sample_step_ns: int,
+) -> Tuple[int, int, Dict[str, ColumnMetaStats]]:
+    total_rows = 0
+    files_scanned = 0
+    min_values: Dict[str, Optional[float]] = {c: None for c in columns}
+    max_values: Dict[str, Optional[float]] = {c: None for c in columns}
+    read_columns = ["timestamp"] + list(columns)
+
+    for file_path in files:
+        parquet = pq.ParquetFile(str(file_path))
+        files_scanned += 1
+        for batch in parquet.iter_batches(columns=read_columns, batch_size=batch_size):
+            ts = batch.column(0).to_numpy(zero_copy_only=False)
+            sample_mask = _compute_time_sampling_mask(ts, sample_step_ns)
+            if sample_mask is not None and not sample_mask.any():
+                continue
+            if sample_mask is None:
+                raise RuntimeError("sample_mask 不应为空")
+            total_rows += int(sample_mask.sum())
+            for idx, col in enumerate(columns, start=1):
+                arr = batch.column(idx).to_numpy(zero_copy_only=False)
+                arr = arr[sample_mask]
+                if arr.size == 0:
+                    continue
+                finite_mask = np.isfinite(arr)
+                if not finite_mask.any():
+                    continue
+                values = arr[finite_mask].astype(np.float64, copy=False)
+                lo = float(values.min())
+                hi = float(values.max())
+                cur_min = min_values[col]
+                cur_max = max_values[col]
+                min_values[col] = lo if cur_min is None else min(cur_min, lo)
+                max_values[col] = hi if cur_max is None else max(cur_max, hi)
+
+    if total_rows == 0:
+        raise RuntimeError("抽样后无有效轨迹点，无法统计分布")
+
+    out: Dict[str, ColumnMetaStats] = {}
+    for col in columns:
+        lo = min_values[col]
+        hi = max_values[col]
+        if lo is None or hi is None:
+            raise RuntimeError(f"抽样后列 {col} 无有效数据，无法生成直方图")
         out[col] = ColumnMetaStats(min_value=lo, max_value=hi)
 
     return files_scanned, total_rows, out
@@ -419,6 +488,18 @@ def _parse_delta_overrides(items: Sequence[str], flag: str) -> Dict[str, float]:
     return values
 
 
+def _compute_time_sampling_mask(
+    ts: np.ndarray, sample_step_ns: Optional[int]
+) -> Optional[np.ndarray]:
+    if sample_step_ns is None:
+        return None
+    if ts.size == 0:
+        return np.zeros(0, dtype=bool)
+    ts_ns = ts.astype("datetime64[ns]").astype(np.int64, copy=False)
+    nat_mask = ts_ns != np.iinfo(np.int64).min
+    return nat_mask & ((ts_ns % sample_step_ns) == 0)
+
+
 def _process_file_chunk(
     args: Tuple[
         List[str],
@@ -426,6 +507,7 @@ def _process_file_chunk(
         List[DeltaHistogramSpec],
         int,
         int,
+        Optional[int],
         Optional[np.ndarray],
         Optional[str],
         Optional[str],
@@ -438,6 +520,7 @@ def _process_file_chunk(
         delta_specs,
         batch_size,
         required_dt_ns,
+        sample_step_ns,
         allowed_ids,
         flight_id_col,
         delta_fid_col,
@@ -446,6 +529,7 @@ def _process_file_chunk(
     columns_hist = [spec.column for spec in specs]
     delta_enabled = bool(delta_specs)
     filter_enabled = allowed_ids is not None
+    sample_enabled = sample_step_ns is not None
     delta_signed = delta_diff_mode == "signed"
     if delta_enabled and not delta_fid_col:
         raise RuntimeError("delta_fid_col 为空，无法计算 delta-hist")
@@ -476,6 +560,8 @@ def _process_file_chunk(
         if delta_enabled:
             read_columns.extend([delta_fid_col, "timestamp"])
             read_columns.extend([spec.source_column for spec in delta_specs])
+        elif sample_enabled:
+            read_columns.append("timestamp")
         read_columns = sorted(set(read_columns))
         col_to_idx = {col: idx for idx, col in enumerate(read_columns)}
 
@@ -497,15 +583,26 @@ def _process_file_chunk(
                 allowed_mask = np.isin(fid_for_filter, allowed_ids)
                 if not allowed_mask.any():
                     continue
-                total_rows += int(allowed_mask.sum())
+            sample_mask = None
+            if sample_enabled:
+                ts_for_sample = arrays["timestamp"]
+                if allowed_mask is not None:
+                    ts_for_sample = ts_for_sample[allowed_mask]
+                sample_mask = _compute_time_sampling_mask(ts_for_sample, sample_step_ns)
+                if sample_mask is not None and not sample_mask.any():
+                    continue
+            if allowed_mask is not None:
+                total_rows += int(sample_mask.sum() if sample_mask is not None else allowed_mask.sum())
             else:
                 sample_arr = arrays[columns_hist[0]] if columns_hist else arrays[delta_fid_col]
-                total_rows += int(sample_arr.size)
+                total_rows += int(sample_mask.sum() if sample_mask is not None else sample_arr.size)
 
             for idx, spec in enumerate(specs):
                 arr = arrays[spec.column]
                 if allowed_mask is not None:
                     arr = arr[allowed_mask]
+                if sample_mask is not None:
+                    arr = arr[sample_mask]
                 if arr.size == 0:
                     continue
                 finite_mask = np.isfinite(arr)
@@ -538,6 +635,9 @@ def _process_file_chunk(
                 if allowed_mask is not None:
                     fid = fid[allowed_mask]
                     ts = ts[allowed_mask]
+                if sample_mask is not None:
+                    fid = fid[sample_mask]
+                    ts = ts[sample_mask]
                 if fid.size == 0:
                     continue
                 if fid.size != ts.size:
@@ -568,6 +668,8 @@ def _process_file_chunk(
                     arr = arrays[dspec.source_column].astype(np.float64, copy=False)
                     if allowed_mask is not None:
                         arr = arr[allowed_mask]
+                    if sample_mask is not None:
+                        arr = arr[sample_mask]
 
                     val_prev = arr[:-1]
                     val_curr = arr[1:]
@@ -1179,6 +1281,7 @@ def _render_lat_lon_heatmap(
     heatmap_background: str,
     heatmap_background_alpha: float,
     heatmap_country_labels: bool,
+    sample_step_ns: Optional[int],
     allowed_ids: Optional[np.ndarray],
     flight_id_col: Optional[str],
 ) -> None:
@@ -1211,6 +1314,8 @@ def _render_lat_lon_heatmap(
         )
 
     columns = [lon_col, lat_col]
+    if sample_step_ns is not None:
+        columns.append("timestamp")
     if allowed_ids is not None:
         if not flight_id_col:
             raise RuntimeError("flight_id_col 为空，无法过滤热力图")
@@ -1227,6 +1332,9 @@ def _render_lat_lon_heatmap(
     ).dropna(subset=[lon_col, lat_col])
     if allowed_ids is not None:
         ddf = ddf[ddf[flight_id_col].isin(allowed_ids)]
+    if sample_step_ns is not None:
+        ts_ns = ddf["timestamp"].astype("int64")
+        ddf = ddf[(ts_ns != np.iinfo(np.int64).min) & ((ts_ns % sample_step_ns) == 0)]
     ddf = ddf[
         (ddf[lon_col] >= lon_min)
         & (ddf[lon_col] <= lon_max)
@@ -1553,6 +1661,15 @@ def main() -> int:
         help="pyarrow iter_batches 的 batch_size（默认：1,000,000）",
     )
     parser.add_argument(
+        "--sample-step-seconds",
+        type=float,
+        default=1.0,
+        help=(
+            "时间抽样步长（秒）。默认 1（不抽样）；>1 时仅保留 "
+            "timestamp 落在该步长网格上的点（例如 20=约每20秒1点）"
+        ),
+    )
+    parser.add_argument(
         "--bin-width",
         action="append",
         default=[],
@@ -1750,6 +1867,16 @@ def main() -> int:
     available_cols = set(parquet0.schema.names)
     numeric_cols = _infer_numeric_columns(parquet0.schema_arrow)
 
+    if args.sample_step_seconds < 1.0:
+        raise ValueError("--sample-step-seconds 必须 >= 1")
+    sample_step_ns: Optional[int] = None
+    if args.sample_step_seconds > 1.0 + 1e-12:
+        sample_step_ns = int(round(args.sample_step_seconds * NS_PER_SECOND))
+        if sample_step_ns <= 0:
+            raise ValueError("--sample-step-seconds 非法，换算纳秒后必须为正数")
+        if "timestamp" not in available_cols:
+            raise RuntimeError("启用时间抽样需要 timestamp 列")
+
     if args.flight_id_col is not None and args.flight_id_col not in available_cols:
         raise RuntimeError(
             f"--flight-id-col 指定列不存在: {args.flight_id_col}（可用列：{sorted(available_cols)}）"
@@ -1810,6 +1937,11 @@ def main() -> int:
     print(f"[INFO] columns={columns}")
     print(f"[INFO] workers={args.workers}, batch_size={args.batch_size}")
     print(f"[INFO] out_dir={out_dir}")
+    if sample_step_ns is not None:
+        print(
+            "[INFO] time_sampling="
+            f"enabled(step_seconds={args.sample_step_seconds}, step_ns={sample_step_ns}, rule=timestamp_ns%step_ns==0)"
+        )
     if filter_enabled:
         print(
             "[INFO] flight_filter="
@@ -1819,14 +1951,25 @@ def main() -> int:
 
     if filter_enabled:
         scanned_files, total_rows_meta, meta_stats = _scan_column_min_max_filtered(
-            files, columns, flight_id_col, allowed_ids, args.batch_size
+            files, columns, flight_id_col, allowed_ids, args.batch_size, sample_step_ns
+        )
+    elif sample_step_ns is not None:
+        scanned_files, total_rows_meta, meta_stats = _scan_column_min_max_sampled(
+            files, columns, args.batch_size, sample_step_ns
         )
     else:
         scanned_files, total_rows_meta, meta_stats = _scan_column_min_max(files, columns)
     specs = _build_hist_specs(columns, bin_widths, meta_stats)
 
     delta_specs: List[DeltaHistogramSpec] = []
-    required_dt_ns = int(round(args.delta_required_dt_seconds * 1e9))
+    delta_required_dt_seconds_effective = args.delta_required_dt_seconds
+    if sample_step_ns is not None and math.isclose(args.delta_required_dt_seconds, 1.0):
+        delta_required_dt_seconds_effective = args.sample_step_seconds
+        print(
+            "[INFO] 检测到时间抽样且 delta-required-dt-seconds 使用默认值 1，"
+            f"已自动调整为 {delta_required_dt_seconds_effective}"
+        )
+    required_dt_ns = int(round(delta_required_dt_seconds_effective * NS_PER_SECOND))
     if args.delta_hist:
         delta_columns_requested = _parse_column_list(args.delta_columns)
         numeric_set = set(numeric_cols)
@@ -1879,7 +2022,7 @@ def main() -> int:
     if delta_specs:
         print(f"[INFO] delta_hist_columns={[s.column for s in delta_specs]}")
         print(
-            f"[INFO] delta_required_dt_seconds={args.delta_required_dt_seconds} (ns={required_dt_ns})"
+            f"[INFO] delta_required_dt_seconds={delta_required_dt_seconds_effective} (ns={required_dt_ns})"
         )
         print(f"[INFO] delta_diff_mode={args.delta_diff_mode}")
         print(f"[INFO] delta_flight_id_col={delta_fid_col}")
@@ -1910,6 +2053,7 @@ def main() -> int:
                 delta_specs,
                 args.batch_size,
                 required_dt_ns,
+                sample_step_ns,
                 allowed_ids,
                 flight_id_col,
                 delta_fid_col,
@@ -1944,6 +2088,7 @@ def main() -> int:
                         delta_specs,
                         args.batch_size,
                         required_dt_ns,
+                        sample_step_ns,
                         allowed_ids,
                         flight_id_col,
                         delta_fid_col,
@@ -2039,6 +2184,8 @@ def main() -> int:
         "date_to": args.date_to,
         "workers": args.workers,
         "batch_size": args.batch_size,
+        "sample_step_seconds": args.sample_step_seconds,
+        "sample_step_ns": sample_step_ns,
         "bin_width_override": args.bin_width,
         "histograms": {
             spec.column: {
@@ -2063,7 +2210,7 @@ def main() -> int:
                 "unit": UNITS.get(spec.column, ""),
                 **asdict(spec),
                 "diff_mode": args.delta_diff_mode,
-                "required_dt_seconds": args.delta_required_dt_seconds,
+                "required_dt_seconds": delta_required_dt_seconds_effective,
                 "required_dt_ns": required_dt_ns,
             }
             for spec in delta_specs
@@ -2071,6 +2218,8 @@ def main() -> int:
         meta["delta_flight_id_col"] = delta_fid_col
         meta["delta_pairs_total"] = int(total_delta_pairs)
         meta["delta_diff_mode"] = args.delta_diff_mode
+        meta["delta_required_dt_seconds_requested"] = args.delta_required_dt_seconds
+        meta["delta_required_dt_seconds_effective"] = delta_required_dt_seconds_effective
     meta["hist_plot"] = {
         "yscales": [s.strip() for s in args.hist_yscales.split(",") if s.strip()],
         "dpi": args.hist_dpi,
@@ -2149,7 +2298,7 @@ def main() -> int:
                         spec.width,
                         spec.start,
                         spec.bins,
-                        args.delta_required_dt_seconds,
+                        delta_required_dt_seconds_effective,
                         int(total_delta_pairs),
                         v,
                         m,
@@ -2266,6 +2415,7 @@ def main() -> int:
             heatmap_background=heatmap_config["background"],
             heatmap_background_alpha=heatmap_config["background_alpha"],
             heatmap_country_labels=heatmap_config["country_labels"],
+            sample_step_ns=sample_step_ns,
             allowed_ids=allowed_ids,
             flight_id_col=flight_id_col,
         )

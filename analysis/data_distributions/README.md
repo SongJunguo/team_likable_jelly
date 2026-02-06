@@ -28,6 +28,8 @@ This folder contains scripts for computing ADS-B parquet field distributions and
 - Delta 默认对所有数值列统计（排除 timestamp/flight_id/original_flight_id/icao24/segment_index）。
 - 若显式指定 --delta-columns（含 all），需要为每个列提供 --delta-bin-width 与 --delta-max。
 - 若默认列中缺少 bin/max 配置，则该列会被自动跳过。
+- 可使用 `--sample-step-seconds` 开启时间抽样（默认 `1` 不抽样；例如 `20` 表示保留 `timestamp` 落在 20 秒网格上的点）。
+- 当开启时间抽样且 `--delta-required-dt-seconds` 保持默认 `1` 时，会自动使用与抽样步长相同的 delta dt，避免 delta 配对为空。
 - 1D 直方图 PNG 会按类别输出到子目录：
 - `motion/hist_y_linear/` 与 `motion/hist_y_log/`
 - `weather/hist_y_linear/` 与 `weather/hist_y_log/`
@@ -51,3 +53,12 @@ python analysis/data_distributions/plot_adsb_parquet_distributions.py \
   --date-from 2022-01-01 \
   --date-to 2022-01-01 \
   --delta-diff-mode signed
+
+20 秒抽样示例（建议加 label 避免覆盖历史结果）：
+bash analysis/data_distributions/run_distributions.sh \
+  --data-dir opensky_2024_PRC_dataset/interpolated_clean_eu_v5 \
+  --filter eu_meta \
+  --date-from 2022-01-01 \
+  --date-to 2022-02-28 \
+  --label interpolated_clean_eu_v5_eu_meta_sample20 \
+  --sample-step-seconds 20
