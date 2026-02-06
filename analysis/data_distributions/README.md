@@ -18,6 +18,17 @@ This folder contains scripts for computing ADS-B parquet field distributions and
 - Default out root: reports/data_distributions
 - Layout: reports/data_distributions/<label>/<date_from__date_to>/
 
+## One-Click Mode Switch
+- `analysis/data_distributions/run_distributions.sh` 顶部可配置：
+  - `INTERVAL_MODE_DEFAULT="1s"` 或 `INTERVAL_MODE_DEFAULT="20s"`
+  - `AUTO_LABEL_WITH_MODE="true"`：自动给 label 增加 `mode1s/mode20s` 后缀，避免覆盖
+  - `AUTO_20S_PLOT_XLIM="true"`：20s 模式自动设置保守 xlim（仅影响绘图）
+- 设置好后可直接一键运行：
+  - `bash analysis/data_distributions/run_distributions.sh`
+- 也支持临时覆盖模式（不改文件）：
+  - `INTERVAL_MODE=1s bash analysis/data_distributions/run_distributions.sh`
+  - `INTERVAL_MODE=20s bash analysis/data_distributions/run_distributions.sh`
+
 ## Notes
 - Heatmap background prefers 10m data: analysis/data_distributions/ne_10m_admin_0_countries.zip
   or analysis/data_distributions/ne_10m_admin_0_countries/ne_10m_admin_0_countries.shp.
@@ -30,6 +41,7 @@ This folder contains scripts for computing ADS-B parquet field distributions and
 - 若默认列中缺少 bin/max 配置，则该列会被自动跳过。
 - 可使用 `--sample-step-seconds` 开启时间抽样（默认 `1` 不抽样；例如 `20` 表示保留 `timestamp` 落在 20 秒网格上的点）。
 - 当开启时间抽样且 `--delta-required-dt-seconds` 保持默认 `1` 时，会自动使用与抽样步长相同的 delta dt，避免 delta 配对为空。
+- `run_distributions.sh` 的 20s 模式会自动注入一组保守 delta 参数（减少 out_of_range）及可选的 delta 绘图 xlim。
 - 1D 直方图 PNG 会按类别输出到子目录：
 - `motion/hist_y_linear/` 与 `motion/hist_y_log/`
 - `weather/hist_y_linear/` 与 `weather/hist_y_log/`

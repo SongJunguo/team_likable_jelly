@@ -21,9 +21,21 @@ usage() {
   -h, --help                            显示帮助
 
 说明:
+  - 间隔模式由脚本顶部 INTERVAL_MODE_DEFAULT 控制（1s 或 20s）
+  - 20s 模式会自动注入一组保守 delta 参数与绘图 xlim（可在脚本顶部关闭）
   - 额外参数可通过 "--" 透传给 analysis/data_distributions/plot_adsb_parquet_distributions.py
 USAGE
 }
+
+# =========================
+# 运行模式配置（按需修改）
+# =========================
+# 可选：1s / 20s
+INTERVAL_MODE_DEFAULT="20s"
+# 是否自动给输出 label 增加 mode 后缀，避免覆盖历史结果
+AUTO_LABEL_WITH_MODE="true"
+# 20s 模式下是否自动注入保守 plot-xlim（仅影响绘图显示，不影响统计）
+AUTO_20S_PLOT_XLIM="true"
 
 # DATA_DIR="opensky_2024_PRC_dataset/interpolated_clean__PCA_v6"
 DATA_DIR="opensky_2024_PRC_dataset/interpolated_clean_eu_v5"
@@ -38,6 +50,11 @@ DELTA_MAX=()
 DELTA_DIFF_MODE=""
 SAMPLE_STEP_SECONDS=""
 EXTRA_ARGS=()
+PRESET_DELTA_BIN_WIDTH=()
+PRESET_DELTA_MAX=()
+PRESET_EXTRA_ARGS=()
+MODE_SUFFIX=""
+INTERVAL_MODE="${INTERVAL_MODE:-$INTERVAL_MODE_DEFAULT}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -121,6 +138,75 @@ case "$FILTER" in
     ;;
 esac
 
+case "$INTERVAL_MODE" in
+  1s)
+    MODE_SUFFIX="mode1s"
+    if [ -z "$SAMPLE_STEP_SECONDS" ]; then
+      SAMPLE_STEP_SECONDS="1"
+    fi
+    ;;
+  20s)
+    MODE_SUFFIX="mode20s"
+    if [ -z "$SAMPLE_STEP_SECONDS" ]; then
+      SAMPLE_STEP_SECONDS="20"
+    fi
+    PRESET_DELTA_BIN_WIDTH=(
+      "latitude:2e-5"
+      "longitude:2e-5"
+      "altitude:20"
+      "groundspeed:0.2"
+      "track:0.2"
+      "vertical_rate:2"
+      "daltitude:20"
+      "gsx:0.2"
+      "gsy:0.2"
+      "tasx:0.2"
+      "tasy:0.2"
+      "tas:0.2"
+    )
+    PRESET_DELTA_MAX=(
+      "latitude:0.1"
+      "longitude:0.12"
+      "altitude:5000"
+      "groundspeed:400"
+      "track:180"
+      "vertical_rate:20000"
+      "daltitude:40000"
+      "gsx:400"
+      "gsy:400"
+      "tasx:400"
+      "tasy:400"
+      "tas:400"
+    )
+    if [ "$AUTO_20S_PLOT_XLIM" = "true" ]; then
+      PRESET_EXTRA_ARGS=(
+        "--plot-xlim" "delta_altitude:0:5000"
+        "--plot-xlim" "delta_groundspeed:0:400"
+        "--plot-xlim" "delta_vertical_rate:0:20000"
+        "--plot-xlim" "delta_daltitude:0:10000"
+        "--plot-xlim" "delta_track:0:180"
+      )
+    fi
+    ;;
+  *)
+    echo "INTERVAL_MODE 只能是 1s 或 20s，当前: $INTERVAL_MODE" >&2
+    exit 2
+    ;;
+esac
+
+if [ "$AUTO_LABEL_WITH_MODE" = "true" ]; then
+  if [ -n "$LABEL" ]; then
+    LABEL="${LABEL}_${MODE_SUFFIX}"
+  else
+    base_name="$(basename "$DATA_DIR")"
+    if [ "$FILTER" != "none" ]; then
+      LABEL="${base_name}_${FILTER}_${MODE_SUFFIX}"
+    else
+      LABEL="${base_name}_${MODE_SUFFIX}"
+    fi
+  fi
+fi
+
 if [ -f /home/neu/miniconda3/etc/profile.d/conda.sh ]; then
   # shellcheck source=/dev/null
   source /home/neu/miniconda3/etc/profile.d/conda.sh
@@ -148,6 +234,12 @@ fi
 if [ -n "$LABEL" ]; then
   args+=(--label "$LABEL")
 fi
+for item in "${PRESET_DELTA_BIN_WIDTH[@]}"; do
+  args+=(--delta-bin-width "$item")
+done
+for item in "${PRESET_DELTA_MAX[@]}"; do
+  args+=(--delta-max "$item")
+done
 for item in "${DELTA_COLUMNS[@]}"; do
   args+=(--delta-columns "$item")
 done
@@ -164,5 +256,7 @@ if [ -n "$SAMPLE_STEP_SECONDS" ]; then
   args+=(--sample-step-seconds "$SAMPLE_STEP_SECONDS")
 fi
 
-echo "[INFO] filter=$FILTER data_dir=$DATA_DIR"
-python analysis/data_distributions/plot_adsb_parquet_distributions.py "${args[@]}" "${EXTRA_ARGS[@]}"
+final_extra_args=("${PRESET_EXTRA_ARGS[@]}" "${EXTRA_ARGS[@]}")
+
+echo "[INFO] filter=$FILTER data_dir=$DATA_DIR interval_mode=$INTERVAL_MODE sample_step_seconds=$SAMPLE_STEP_SECONDS"
+python analysis/data_distributions/plot_adsb_parquet_distributions.py "${args[@]}" "${final_extra_args[@]}"
