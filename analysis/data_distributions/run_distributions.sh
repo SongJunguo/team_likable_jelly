@@ -32,6 +32,8 @@ USAGE
 # =========================
 # 可选：1s / 20s
 INTERVAL_MODE_DEFAULT="20s"
+# 默认 delta 差值模式（建议 signed；可通过命令行 --delta-diff-mode 覆盖）
+DELTA_DIFF_MODE_DEFAULT="signed"
 # 是否自动给输出 label 增加 mode 后缀，避免覆盖历史结果
 AUTO_LABEL_WITH_MODE="true"
 # 20s 模式下是否自动注入保守 plot-xlim（仅影响绘图显示，不影响统计）
@@ -47,7 +49,7 @@ OUT_ROOT=""
 DELTA_COLUMNS=()
 DELTA_BIN_WIDTH=()
 DELTA_MAX=()
-DELTA_DIFF_MODE=""
+DELTA_DIFF_MODE="$DELTA_DIFF_MODE_DEFAULT"
 SAMPLE_STEP_SECONDS=""
 EXTRA_ARGS=()
 PRESET_DELTA_BIN_WIDTH=()
@@ -55,6 +57,63 @@ PRESET_DELTA_MAX=()
 PRESET_EXTRA_ARGS=()
 MODE_SUFFIX=""
 INTERVAL_MODE="${INTERVAL_MODE:-$INTERVAL_MODE_DEFAULT}"
+
+merge_colon_pairs() {
+  local out_name="$1"
+  shift
+  local -n _out_arr="$out_name"
+  local -A merged=()
+  local -a order=()
+  local item key
+
+  for item in "$@"; do
+    key="${item%%:*}"
+    if [[ -z "$key" || "$key" == "$item" ]]; then
+      echo "[WARN] 跳过格式异常的键值对: $item" >&2
+      continue
+    fi
+    if [[ -z "${merged[$key]+x}" ]]; then
+      order+=("$key")
+    fi
+    merged[$key]="$item"
+  done
+
+  _out_arr=()
+  for key in "${order[@]}"; do
+    _out_arr+=("${merged[$key]}")
+  done
+}
+
+extract_and_dedup_plot_xlim() {
+  local in_name="$1"
+  local out_name="$2"
+  local xlim_name="$3"
+  local -n _in_arr="$in_name"
+  local -n _out_arr="$out_name"
+  local -n _xlim_arr="$xlim_name"
+  local -a xlim_items=()
+  local idx=0
+  local token value
+
+  _out_arr=()
+  while [ $idx -lt ${#_in_arr[@]} ]; do
+    token="${_in_arr[$idx]}"
+    if [ "$token" = "--plot-xlim" ]; then
+      idx=$((idx + 1))
+      if [ $idx -ge ${#_in_arr[@]} ]; then
+        echo "[WARN] --plot-xlim 缺少值，已忽略该参数" >&2
+        break
+      fi
+      value="${_in_arr[$idx]}"
+      xlim_items+=("$value")
+    else
+      _out_arr+=("$token")
+    fi
+    idx=$((idx + 1))
+  done
+
+  merge_colon_pairs _xlim_arr "${xlim_items[@]}"
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -180,11 +239,11 @@ case "$INTERVAL_MODE" in
     )
     if [ "$AUTO_20S_PLOT_XLIM" = "true" ]; then
       PRESET_EXTRA_ARGS=(
-        "--plot-xlim" "delta_altitude:0:5000"
-        "--plot-xlim" "delta_groundspeed:0:400"
-        "--plot-xlim" "delta_vertical_rate:0:20000"
-        "--plot-xlim" "delta_daltitude:0:10000"
-        "--plot-xlim" "delta_track:0:180"
+        "--plot-xlim" "delta_altitude:-5000:5000"
+        "--plot-xlim" "delta_groundspeed:-400:400"
+        "--plot-xlim" "delta_vertical_rate:-20000:20000"
+        "--plot-xlim" "delta_daltitude:-10000:10000"
+        "--plot-xlim" "delta_track:-180:180"
       )
     fi
     ;;
@@ -234,20 +293,20 @@ fi
 if [ -n "$LABEL" ]; then
   args+=(--label "$LABEL")
 fi
-for item in "${PRESET_DELTA_BIN_WIDTH[@]}"; do
+
+effective_delta_bin_width=()
+effective_delta_max=()
+merge_colon_pairs effective_delta_bin_width "${PRESET_DELTA_BIN_WIDTH[@]}" "${DELTA_BIN_WIDTH[@]}"
+merge_colon_pairs effective_delta_max "${PRESET_DELTA_MAX[@]}" "${DELTA_MAX[@]}"
+
+for item in "${effective_delta_bin_width[@]}"; do
   args+=(--delta-bin-width "$item")
 done
-for item in "${PRESET_DELTA_MAX[@]}"; do
+for item in "${effective_delta_max[@]}"; do
   args+=(--delta-max "$item")
 done
 for item in "${DELTA_COLUMNS[@]}"; do
   args+=(--delta-columns "$item")
-done
-for item in "${DELTA_BIN_WIDTH[@]}"; do
-  args+=(--delta-bin-width "$item")
-done
-for item in "${DELTA_MAX[@]}"; do
-  args+=(--delta-max "$item")
 done
 if [ -n "$DELTA_DIFF_MODE" ]; then
   args+=(--delta-diff-mode "$DELTA_DIFF_MODE")
@@ -256,7 +315,23 @@ if [ -n "$SAMPLE_STEP_SECONDS" ]; then
   args+=(--sample-step-seconds "$SAMPLE_STEP_SECONDS")
 fi
 
-final_extra_args=("${PRESET_EXTRA_ARGS[@]}" "${EXTRA_ARGS[@]}")
+raw_extra_args=("${PRESET_EXTRA_ARGS[@]}" "${EXTRA_ARGS[@]}")
+final_extra_args=()
+effective_plot_xlims=()
+extract_and_dedup_plot_xlim raw_extra_args final_extra_args effective_plot_xlims
+for item in "${effective_plot_xlims[@]}"; do
+  final_extra_args+=(--plot-xlim "$item")
+done
 
-echo "[INFO] filter=$FILTER data_dir=$DATA_DIR interval_mode=$INTERVAL_MODE sample_step_seconds=$SAMPLE_STEP_SECONDS"
+echo "[INFO] filter=$FILTER data_dir=$DATA_DIR interval_mode=$INTERVAL_MODE sample_step_seconds=$SAMPLE_STEP_SECONDS delta_diff_mode=$DELTA_DIFF_MODE"
+if [ ${#effective_delta_max[@]} -gt 0 ]; then
+  echo "[INFO] effective --delta-max (${#effective_delta_max[@]}): ${effective_delta_max[*]}"
+else
+  echo "[INFO] effective --delta-max: (none)"
+fi
+if [ ${#effective_plot_xlims[@]} -gt 0 ]; then
+  echo "[INFO] effective --plot-xlim (${#effective_plot_xlims[@]}): ${effective_plot_xlims[*]}"
+else
+  echo "[INFO] effective --plot-xlim: (none)"
+fi
 python analysis/data_distributions/plot_adsb_parquet_distributions.py "${args[@]}" "${final_extra_args[@]}"

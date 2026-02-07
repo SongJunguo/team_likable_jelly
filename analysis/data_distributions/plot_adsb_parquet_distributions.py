@@ -488,6 +488,25 @@ def _parse_delta_overrides(items: Sequence[str], flag: str) -> Dict[str, float]:
     return values
 
 
+def _resolve_plot_xlims(
+    items: Sequence[str],
+) -> Tuple[Dict[str, Tuple[float, float]], Dict[str, Tuple[float, float]]]:
+    xlims: Dict[str, Tuple[float, float]] = dict(DEFAULT_PLOT_XLIMS)
+    overrides: Dict[str, Tuple[float, float]] = {}
+    for item in items:
+        parts = item.split(":")
+        if len(parts) != 3:
+            raise ValueError(f"--plot-xlim 格式错误: {item}（期望 <col>:<min>:<max>）")
+        col, lo_s, hi_s = parts
+        lo = float(lo_s)
+        hi = float(hi_s)
+        if not (lo < hi):
+            raise ValueError(f"--plot-xlim 非法范围: {item}（要求 min < max）")
+        xlims[col] = (lo, hi)
+        overrides[col] = (lo, hi)
+    return xlims, overrides
+
+
 def _compute_time_sampling_mask(
     ts: np.ndarray, sample_step_ns: Optional[int]
 ) -> Optional[np.ndarray]:
@@ -858,6 +877,56 @@ def _write_hist_counts_csv(
                         int(c),
                     ]
                 )
+
+
+def _round_up_to_step(value: float, step: float) -> float:
+    if not math.isfinite(value):
+        return float("nan")
+    if step <= 0:
+        return value
+    return math.ceil(value / step) * step
+
+
+def _hist_quantile_from_counts(spec: HistogramSpec, counts: np.ndarray, q: float) -> float:
+    if not (0.0 <= q <= 1.0):
+        raise ValueError(f"quantile 必须在 [0,1] 内，当前: {q}")
+    total = int(np.sum(counts, dtype=np.int64))
+    if total <= 0:
+        return float("nan")
+    target = q * float(total)
+    if target <= 0:
+        return float(spec.start)
+    cum = np.cumsum(counts, dtype=np.int64)
+    idx = int(np.searchsorted(cum, target, side="left"))
+    idx = min(max(idx, 0), spec.bins - 1)
+    left = spec.start + spec.width * idx
+    prev = int(cum[idx - 1]) if idx > 0 else 0
+    bin_count = int(counts[idx])
+    if bin_count <= 0:
+        return float(left)
+    frac = (target - float(prev)) / float(bin_count)
+    frac = min(max(frac, 0.0), 1.0)
+    return float(left + frac * spec.width)
+
+
+def _hist_abs_quantile_from_counts(spec: HistogramSpec, counts: np.ndarray, q: float) -> float:
+    if not (0.0 <= q <= 1.0):
+        raise ValueError(f"quantile 必须在 [0,1] 内，当前: {q}")
+    total = int(np.sum(counts, dtype=np.int64))
+    if total <= 0:
+        return float("nan")
+    centers = spec.start + (np.arange(spec.bins, dtype=np.float64) + 0.5) * spec.width
+    abs_centers = np.abs(centers)
+    order = np.argsort(abs_centers, kind="mergesort")
+    sorted_abs = abs_centers[order]
+    sorted_counts = counts[order].astype(np.int64, copy=False)
+    target = q * float(total)
+    if target <= 0:
+        return float(sorted_abs[0])
+    cum = np.cumsum(sorted_counts, dtype=np.int64)
+    idx = int(np.searchsorted(cum, target, side="left"))
+    idx = min(max(idx, 0), len(sorted_abs) - 1)
+    return float(sorted_abs[idx])
 
 
 def _split_into_chunks(items: Sequence[Path], chunks: int) -> List[List[str]]:
@@ -2026,6 +2095,22 @@ def main() -> int:
         )
         print(f"[INFO] delta_diff_mode={args.delta_diff_mode}")
         print(f"[INFO] delta_flight_id_col={delta_fid_col}")
+        print(
+            "[INFO] effective delta-max: "
+            + ", ".join(f"{s.source_column}:{s.max_value:g}" for s in delta_specs)
+        )
+
+    effective_xlims: Dict[str, Tuple[float, float]] = dict(DEFAULT_PLOT_XLIMS)
+    plot_xlim_overrides: Dict[str, Tuple[float, float]] = {}
+    if not args.no_hist_plots:
+        effective_xlims, plot_xlim_overrides = _resolve_plot_xlims(args.plot_xlim)
+        if plot_xlim_overrides:
+            print(
+                "[INFO] effective plot-xlim override: "
+                + ", ".join(
+                    f"{k}:{v[0]:g}:{v[1]:g}" for k, v in sorted(plot_xlim_overrides.items())
+                )
+            )
 
     chunks = _split_into_chunks(files, args.workers)
     print(f"[INFO] chunk_count={len(chunks)}")
@@ -2220,11 +2305,21 @@ def main() -> int:
         meta["delta_diff_mode"] = args.delta_diff_mode
         meta["delta_required_dt_seconds_requested"] = args.delta_required_dt_seconds
         meta["delta_required_dt_seconds_effective"] = delta_required_dt_seconds_effective
+        meta["delta_config_effective"] = {
+            "bin_width": {s.source_column: float(s.width) for s in delta_specs},
+            "max_value": {s.source_column: float(s.max_value) for s in delta_specs},
+        }
     meta["hist_plot"] = {
         "yscales": [s.strip() for s in args.hist_yscales.split(",") if s.strip()],
         "dpi": args.hist_dpi,
         "default_xlims": DEFAULT_PLOT_XLIMS,
-        "xlims_override": args.plot_xlim,
+        "xlims_override_raw": args.plot_xlim,
+        "xlims_override_effective": {
+            k: [float(v[0]), float(v[1])] for k, v in sorted(plot_xlim_overrides.items())
+        },
+        "xlims_effective": {
+            k: [float(v[0]), float(v[1])] for k, v in sorted(effective_xlims.items())
+        },
     }
     if heatmap_config is not None:
         meta["heatmap_lat_lon"] = heatmap_config
@@ -2262,6 +2357,7 @@ def main() -> int:
         )
         combined_counts.extend(list(total_delta_counts))
         delta_summary_path = out_dir / "delta_summary.csv"
+        delta_analysis_rows: List[Dict[str, float]] = []
         with delta_summary_path.open("w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(
@@ -2279,6 +2375,14 @@ def main() -> int:
                     "mean",
                     "std",
                     "out_of_range",
+                    "out_of_range_ratio",
+                    "in_range_ratio",
+                    "p99",
+                    "p99_9",
+                    "abs_p99",
+                    "abs_p99_9",
+                    "recommended_delta_max",
+                    "recommended_delta_max_conservative",
                 ]
             )
             for idx, spec in enumerate(delta_specs):
@@ -2290,6 +2394,42 @@ def main() -> int:
                     "nan"
                 )
                 std = float(math.sqrt(var)) if v and var >= 0 else float("nan")
+                pair_base = int(v + m + oor)
+                if pair_base <= 0:
+                    pair_base = int(total_delta_pairs)
+                out_of_range_ratio = (
+                    float(oor / pair_base) if pair_base > 0 else float("nan")
+                )
+                in_range_ratio = float(v / pair_base) if pair_base > 0 else float("nan")
+                hspec = HistogramSpec(
+                    column=spec.column,
+                    start=spec.start,
+                    width=spec.width,
+                    bins=spec.bins,
+                )
+                p99 = _hist_quantile_from_counts(hspec, total_delta_counts[idx], 0.99)
+                p99_9 = _hist_quantile_from_counts(hspec, total_delta_counts[idx], 0.999)
+                abs_p99 = _hist_abs_quantile_from_counts(
+                    hspec, total_delta_counts[idx], 0.99
+                )
+                abs_p99_9 = _hist_abs_quantile_from_counts(
+                    hspec, total_delta_counts[idx], 0.999
+                )
+                rec_max = _round_up_to_step(abs_p99_9 * 1.10, spec.width)
+                rec_max_conservative = _round_up_to_step(abs_p99_9 * 1.25, spec.width)
+                delta_analysis_rows.append(
+                    {
+                        "column": spec.column,
+                        "source_column": spec.source_column,
+                        "out_of_range_ratio": out_of_range_ratio,
+                        "p99": p99,
+                        "p99_9": p99_9,
+                        "abs_p99": abs_p99,
+                        "abs_p99_9": abs_p99_9,
+                        "recommended_delta_max": rec_max,
+                        "recommended_delta_max_conservative": rec_max_conservative,
+                    }
+                )
                 writer.writerow(
                     [
                         spec.column,
@@ -2305,7 +2445,64 @@ def main() -> int:
                         mean,
                         std,
                         oor,
+                        out_of_range_ratio,
+                        in_range_ratio,
+                        p99,
+                        p99_9,
+                        abs_p99,
+                        abs_p99_9,
+                        rec_max,
+                        rec_max_conservative,
                     ]
+                )
+        delta_recommend_path = out_dir / "delta_recommendations.csv"
+        with delta_recommend_path.open("w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                [
+                    "column",
+                    "source_column",
+                    "out_of_range_ratio",
+                    "p99",
+                    "p99_9",
+                    "abs_p99",
+                    "abs_p99_9",
+                    "recommended_delta_max",
+                    "recommended_delta_max_conservative",
+                ]
+            )
+            for row in sorted(
+                delta_analysis_rows,
+                key=lambda r: float(r["out_of_range_ratio"]),
+                reverse=True,
+            ):
+                writer.writerow(
+                    [
+                        row["column"],
+                        row["source_column"],
+                        row["out_of_range_ratio"],
+                        row["p99"],
+                        row["p99_9"],
+                        row["abs_p99"],
+                        row["abs_p99_9"],
+                        row["recommended_delta_max"],
+                        row["recommended_delta_max_conservative"],
+                    ]
+                )
+        print("[INFO] delta 分析已输出: delta_summary.csv / delta_recommendations.csv")
+        if delta_analysis_rows:
+            print("[INFO] delta 截断率 Top10（按 out_of_range_ratio 降序）:")
+            for row in sorted(
+                delta_analysis_rows,
+                key=lambda r: float(r["out_of_range_ratio"]),
+                reverse=True,
+            )[:10]:
+                print(
+                    "  "
+                    f"{row['column']}: "
+                    f"oor_ratio={row['out_of_range_ratio']:.6f}, "
+                    f"p99={row['p99']:.6g}, p99.9={row['p99_9']:.6g}, "
+                    f"rec_max={row['recommended_delta_max']:.6g}"
                 )
 
     _write_hist_counts_csv(out_dir / "hist_counts.csv", combined_specs, combined_counts)
@@ -2338,14 +2535,6 @@ def main() -> int:
         if invalid:
             raise ValueError(f"--hist-yscales 不支持: {invalid}（可选：linear,log）")
 
-        xlims: Dict[str, Tuple[float, float]] = dict(DEFAULT_PLOT_XLIMS)
-        for item in args.plot_xlim:
-            parts = item.split(":")
-            if len(parts) != 3:
-                raise ValueError(f"--plot-xlim 格式错误: {item}（期望 <col>:<min>:<max>）")
-            col, lo_s, hi_s = parts
-            xlims[col] = (float(lo_s), float(hi_s))
-
         for yscale in yscales:
             if motion_specs:
                 plot_dir = out_dir / "motion" / f"hist_y_{yscale}"
@@ -2354,7 +2543,7 @@ def main() -> int:
                     motion_specs,
                     motion_counts,
                     yscale=yscale,
-                    xlims=xlims,
+                    xlims=effective_xlims,
                     dpi=args.hist_dpi,
                 )
             if weather_specs:
@@ -2364,7 +2553,7 @@ def main() -> int:
                     weather_specs,
                     weather_counts,
                     yscale=yscale,
-                    xlims=xlims,
+                    xlims=effective_xlims,
                     dpi=args.hist_dpi,
                 )
         for legacy in out_dir.glob("hist_*.png"):
@@ -2427,7 +2616,10 @@ def main() -> int:
     elif not args.no_heatmap:
         print("[INFO] 数据中不存在 latitude/longitude，跳过 2D 热力图")
 
-    print("[INFO] done (已生成 hist_meta.json / hist_counts.csv / summary.csv)")
+    done_files = "hist_meta.json / hist_counts.csv / summary.csv"
+    if delta_specs:
+        done_files += " / delta_summary.csv / delta_recommendations.csv"
+    print(f"[INFO] done (已生成 {done_files})")
     return 0
 
 
