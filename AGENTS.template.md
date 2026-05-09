@@ -29,7 +29,7 @@
    - 说明：这是raw数据的一个子集，并非全部轨迹数据
    - 原始数据和清洗的中间数据目录：`team_likable_jelly/opensky_2024_PRC_dataset`
    - 原始数据在 `team_likable_jelly/opensky_2024_PRC_dataset/rawtrajectories`
-   - 过滤了，未插值，有很多缺失点的数据（nan值）在  `team_likable_jelly/opensky_2024_PRC_dataset/classic_filtered_trajectories`
+   - 目前使用的清洗好的训练数据集`opensky_2024_PRC_dataset/interpolated_clean_eu_v5`
 
 ### 开发流程
 9. **文档更新**：更新代码后，必须更新对应的markdown文件，保持更改的可追踪性和可记忆性
